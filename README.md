@@ -1,30 +1,22 @@
 # MLWR 浮点型同态算法实现
 
-本项目用于实现用户提供方案的 RNS 版本。模块参数按口述暂记为
-`l = k = 2`，需用原方案核对；算法差异从式（2-1）开始。
+基于交底书的 `l = k = 2` 模块结构，独立实现 RNS 近似同态运算，使用
+OpenFHE 1.6.1 的多项式、NTT、随机采样和编码基础设施。包含可运行示例、
+整数参考测试、原式反例和 macOS / Linux 验证流程。
 
-**当前状态：已建立并验证 OpenFHE 对照环境，尚未实现 MLWR 算法。**
-三级中原始方案仍等待本次登录验证码，未下载，也尚未核对公式。
-本仓库中的 `openfhe_reference` 是标准 CKKS 对照程序，不能作为 MLWR 实现。
+**交付的是修订研究版。原式不能直接成为正确、安全的加密方案。**
+原重线性化符号错误，编码缺少浮点尺度，公钥／加密的扩模结构存在公开恢复攻击。
+修订版更换取整源模数、显式管理尺度并修正符号；这些是明确的构造修改，
+详见 [公式与修订说明](docs/algorithm.md)。原式问题保留为独立可运行反例。
+修订版的密码安全性仍未证明；正确性测试通过不等于安全证明。
 
-## 固定依赖与参数
+已实现 Setup、KeyGen、RelinGen、Encode/Decode、Encrypt/Decrypt、Add、
+PlainMult、Mult、Rescale、KSGen/KeySwitch、RotateKeyGen/Rotate。
+原文没有定义 Bootstrap，本项目实现有限深度运算，不声称具有自举能力。
 
-- C++17、CMake、Ninja。
-- [OpenFHE v1.6.1](https://github.com/openfheorg/openfhe-development/releases/tag/v1.6.1)，
-  提交 `b59e1f291965f14fbee5172cd83a20f5b856204f`。
-- `NATIVE_SIZE=64`，静态库，OpenMP 关闭。
-- 对照工作负载指定 `multiplicativeDepth=3`、`batchSize=8`。
-- 其余密码参数直接采用该版本 `CCParams<CryptoContextCKKSRNS>` 默认值，
-  包括 60 位首模数、50 位缩放模数、`FLEXIBLEAUTOEXT`、`UNIFORM_TERNARY`、
-  `HYBRID` 和 `HEStd_128_classic`；环维度由 OpenFHE 自动选择。
-- 程序输出实际 RNS 素数链，JSON 中的素数使用字符串以保留整数精度。
+## 构建和运行
 
-OpenFHE 的 RLWE 参数表只作为对照参数的选择依据，不构成新 MLWR 方案的安全证明。
-拿到原方案后还须明确其舍入模数、取整规则、密钥分布和正确性条件。
-
-## 本地构建与验证
-
-需要 Git、C++17 编译器、CMake 3.20 或更新版本、Ninja。
+需要 Git、C++17 编译器、CMake 3.20+、Ninja、Python 3。
 
 ```sh
 bash scripts/build_openfhe.sh
@@ -32,21 +24,54 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DOpenFHE_DIR="$PWD/.deps/openfhe-install/lib/OpenFHE"
 cmake --build build --parallel 4
 ctest --test-dir build --output-on-failure
-./build/openfhe_reference
+python3 scripts/compare_parameters.py build/evidence/openfhe-reference.json build/evidence/mlwr.json
+./build/mlwr_demo
 ```
 
-`MLWR_BUILD_JOBS` 可控制依赖构建的并行度，默认 4。
-对照程序检验包含负数、零和小数的加解密、加法、乘法与连续平方，
-检查非有限值，并以最大绝对误差 `1e-6` 为失败阈值。
-GitHub Actions 使用 Ubuntu 24.04，保存实际参数与误差报告。
+`MLWR_BUILD_JOBS` 控制 OpenFHE 构建并行度，默认 4。首次构建下载固定依赖。
+`mlwr_demo` 演示复数向量的加密、平方、重缩放、左移和解密，逐槽打印误差。
+公共接口位于 [scheme.hpp](include/mlwr/scheme.hpp)。
 
-## 待原始方案确认的工作
+## 与 OpenFHE 的参数关系
 
-1. 下载最新导出，保存原文件和哈希，核对式（2-1）起的全部定义。
-2. 确认 `l = k = 2` 及 RNS 舍入语义，记录公式与代码的对应关系。
-3. 平台已与网页版 ChatGPT Pro 协商：macOS arm64 开发、Linux x86_64
-   复现；暂不需要 Windows/WSL2 或 GPU。算法边界仍待原文复核。
-4. 实现密钥生成、加解密、同态运算及方案定义的其他步骤，
-   用小参数精确算术验证，再与相同参数的 OpenFHE 对照。
+固定版本为 [v1.6.1 / b59e1f2](https://github.com/openfheorg/openfhe-development/tree/b59e1f291965f14fbee5172cd83a20f5b856204f)，
+`NATIVE_SIZE=64`、`MATHBACKEND=4`、静态库、关闭 OpenMP 和 native optimization。
+双方使用同一个参数生成函数：
 
-原始文件、本地会话记录及构建依赖由 `.gitignore` 排除。
+| 配置 | 数值／来源 |
+|---|---|
+| 运算深度、槽数 | 3、8；另外测试满槽 |
+| HYBRID 大 digit 数 | 显式设为 1，适配原文无 gadget 的整体密钥转换 |
+| 编码数据类型 | 显式设为 COMPLEX，保留原文消息域的虚部 |
+| 其他共有设置 | OpenFHE 默认：首模数 60 位、缩放模数 50 位、FLEXIBLEAUTOEXT、UNIFORM_TERNARY、HEStd_128_classic |
+| 实际主测试环维度 | 32768，由 OpenFHE 自动选择 |
+| 主链、辅助链、单位根、初始编码尺度 | 直接复用 OpenFHE 生成结果；JSON 逐项核对 |
+| 模块维度、新增源模数和公钥模数 | MLWR 研究构造独有，单独记录 |
+
+这是一套双方相同的 **OpenFHE 配置**，并非所有选项均取库默认值。
+旧的仅 CKKS 默认对照保留在 Git 历史中；它的环维度不能替代当前配置。
+RLWE 安全参数表不构成本修订方案的 MLWR 安全证明。
+
+多项式乘法使用 RNS/NTT；非线性的跨模数取整、中心提升目前采用精确 CRT
+重构与大整数计算。这是以正确性为先的实现，尚未优化为全流程无大整数的 RNS。
+
+## 验证与使用范围
+
+- 独立 Python 整数算术核验 RNS/NTT、跨基舍入、中心提升、旋转和边界值。
+- 原式反例验证错误符号、无尺度编码和公开恢复问题。
+- C++ 使用多组新鲜随机密钥，覆盖负数、零、小数、复数、加法、明密乘、
+  密密乘、三层连续平方、正负旋转、末层换钥、满槽及补零。
+- 检查相位误差界和错误上下文／密钥／层级／尺度／模数链等拒绝条件。
+- 浮点测试阈值为最大绝对误差 `1e-6`；执行报告记录每项实际误差。
+
+CTest 自动生成 `build/evidence/*.json`。GitHub Actions 使用 Ubuntu 24.04 / GCC 13，
+上传报告、编译器信息和测试日志。平台路线与网页版 ChatGPT Pro 协商后确定：
+macOS arm64 开发、Linux x86_64 复现；本阶段不依赖 Windows 或 GPU。
+
+默认输入的公开幅度上限为 `|z_i| <= 2`；其他范围通过 `Encode` 显式声明。
+层级与尺度必须匹配，乘法后由调用者显式重缩放；本浮点配置拒绝小于 `2^40` 的尺度。
+默认 `Decrypt` 不加噪，用于可信本地正确性实验；可传入均匀整数噪声上限测试
+原文的 flooding 步骤，但没有得到满足其 IND-CPA^D 声明的参数证明。
+接口不是经过审计的生产加密服务；目前无序列化、跨进程密钥管理或常数时间保证。
+
+原始文件已保存在本地工作目录，原文件、会话记录和构建依赖均由 `.gitignore` 排除。

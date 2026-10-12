@@ -1,4 +1,4 @@
-#include "openfhe.h"
+#include "mlwr/profile.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -37,12 +37,8 @@ double Check(const CryptoContext<DCRTPoly>& context, const PrivateKey<DCRTPoly>&
 int main() {
     try {
         using namespace lbcrypto;
-        // All cryptographic settings use upstream defaults. Only the workload's
-        // depth and slot count are specified; no manual ring-dimension override.
-        CCParams<CryptoContextCKKSRNS> parameters;
-        parameters.SetMultiplicativeDepth(3);
-        parameters.SetBatchSize(8);
-        auto context = GenCryptoContext(parameters);
+        const auto profile = mlwr::OpenFheProfile();
+        auto context = profile.encoder;
         context->Enable(PKE);
         context->Enable(KEYSWITCH);
         context->Enable(LEVELEDSHE);
@@ -62,26 +58,10 @@ int main() {
         auto squared = context->EvalMult(ciphertext, ciphertext);
         const double multiplication = Check(context, keys.secretKey, squared, square);
         const double chain = Check(context, keys.secretKey, context->EvalMult(squared, squared), fourth);
-        auto crypto = std::dynamic_pointer_cast<CryptoParametersCKKSRNS>(context->GetCryptoParameters());
         std::cout << std::setprecision(17)
-                  << "{\n  \"scheme\": \"OpenFHE CKKS reference\",\n"
-                  << "  \"openfhe_version\": \"1.6.1\",\n"
-                  << "  \"openfhe_commit\": \"b59e1f291965f14fbee5172cd83a20f5b856204f\",\n"
-                  << "  \"native_bits\": " << NATIVEINT << ",\n"
-                  << "  \"ring_dimension\": " << context->GetRingDimension() << ",\n"
-                  << "  \"batch_size\": 8,\n  \"multiplicative_depth\": 3,\n"
-                  << "  \"first_mod_bits\": " << parameters.GetFirstModSize() << ",\n"
-                  << "  \"scaling_mod_bits\": " << parameters.GetScalingModSize() << ",\n"
-                  << "  \"scaling_technique\": \"" << crypto->GetScalingTechnique() << "\",\n"
-                  << "  \"security_table\": \"" << crypto->GetStdLevel() << "\",\n"
-                  << "  \"rns_primes\": [";
-        const auto& towers = crypto->GetElementParams()->GetParams();
-        for (std::size_t i = 0; i < towers.size(); ++i) {
-            if (i) std::cout << ", ";
-            // Strings preserve exact 64-bit values for JSON consumers.
-            std::cout << '"' << towers[i]->GetModulus() << '"';
-        }
-        std::cout << "],\n  \"max_absolute_error\": {\n"
+                  << "{\n  \"scheme\": \"OpenFHE CKKS reference\",\n  \"profile\": ";
+        mlwr::WriteProfileJson(std::cout, profile);
+        std::cout << ",\n  \"max_absolute_error\": {\n"
                   << "    \"roundtrip\": " << roundtrip << ",\n"
                   << "    \"addition\": " << addition << ",\n"
                   << "    \"multiplication\": " << multiplication << ",\n"

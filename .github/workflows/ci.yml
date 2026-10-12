@@ -1,4 +1,4 @@
-name: C++ reference checks
+name: MLWR and OpenFHE correctness
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  reference:
+  correctness:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -32,12 +32,15 @@ jobs:
       - name: Test and record parameters
         run: |
           ctest --test-dir build --output-on-failure
-          mkdir -p evidence
-          ./build/openfhe_reference > evidence/openfhe-reference.json
-          c++ --version > evidence/compiler.txt
-          uname -a > evidence/platform.txt
+          python3 scripts/compare_parameters.py build/evidence/openfhe-reference.json build/evidence/mlwr.json
+          c++ --version > build/evidence/compiler.txt
+          uname -a > build/evidence/platform.txt
+          git rev-parse HEAD > build/evidence/commit.txt
       - name: Upload evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: reference-evidence-linux
-          path: evidence/
+          name: correctness-evidence-linux
+          path: |
+            build/evidence/
+            build/Testing/Temporary/LastTest.log

@@ -26,7 +26,31 @@ if(OpenFHE_OPENMP)
 endif()
 
 add_executable(openfhe_reference apps/openfhe_reference.cpp)
-target_link_libraries(openfhe_reference PRIVATE mlwr_openfhe)
+target_link_libraries(openfhe_reference PRIVATE mlwr)
+
+add_library(mlwr src/rns.cpp src/profile.cpp src/scheme.cpp)
+target_include_directories(mlwr PUBLIC include)
+target_link_libraries(mlwr PUBLIC mlwr_openfhe)
+target_compile_options(mlwr PRIVATE -Wall -Wextra -Wpedantic)
+add_executable(mlwr_demo apps/mlwr_demo.cpp)
+target_link_libraries(mlwr_demo PRIVATE mlwr)
 
 enable_testing()
-add_test(NAME openfhe_reference COMMAND openfhe_reference)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME openfhe_reference COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/openfhe-reference.json $<TARGET_FILE:openfhe_reference>)
+add_executable(rns_probe tests/rns_probe.cpp)
+target_link_libraries(rns_probe PRIVATE mlwr)
+add_test(NAME rns_integer_oracle
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rns_oracle.py $<TARGET_FILE:rns_probe>)
+add_test(NAME source_counterexamples
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/source-counterexamples.json
+    ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_source_counterexamples.py)
+add_executable(mlwr_checks tests/mlwr_checks.cpp)
+target_link_libraries(mlwr_checks PRIVATE mlwr)
+add_test(NAME mlwr_correctness COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/mlwr.json $<TARGET_FILE:mlwr_checks>)
+set_tests_properties(mlwr_correctness PROPERTIES TIMEOUT 600)
