@@ -1,0 +1,11 @@
+.DS_Store
+.deps/
+.local/
+build/
+build-*/
+source-documents/
+*.zip
+*.docx
+*.pdf
+__pycache__/
+*.pyc

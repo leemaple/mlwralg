@@ -1,0 +1,43 @@
+name: C++ reference checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+      - name: Cache pinned OpenFHE
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .deps/openfhe-install
+          key: openfhe-b59e1f2-ubuntu24-gcc13-native64-static-noomp-v1
+      - name: Build pinned OpenFHE
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_openfhe.sh
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOpenFHE_DIR="$PWD/.deps/openfhe-install/lib/OpenFHE"
+          cmake --build build --parallel 4
+      - name: Test and record parameters
+        run: |
+          ctest --test-dir build --output-on-failure
+          mkdir -p evidence
+          ./build/openfhe_reference > evidence/openfhe-reference.json
+          c++ --version > evidence/compiler.txt
+          uname -a > evidence/platform.txt
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-evidence-linux
+          path: evidence/
