@@ -1,0 +1,66 @@
+"""Independently recompute reported errors and timing aggregates from observations."""
+import json
+import math
+from pathlib import Path
+import statistics
+import sys
+
+
+def close(a, b):
+    return math.isclose(a, b, rel_tol=2e-12, abs_tol=1e-25)
+
+
+def verify(path):
+    report = json.loads(Path(path).read_text())
+    protocol = report["protocol"]
+    assert report["all_correctness_checks_passed"] is True
+    assert report["profile"]["ring_dimension"] == 32768
+    assert report["profile"]["slots"] == 8
+    assert protocol["absolute_tolerance"] == 2 ** (-protocol["precision_target_bits"])
+    assert len(report["correctness"]) == protocol["fresh_key_trials"] * protocol["cases_per_key"]
+    for case in report["correctness"]:
+        bounds = case["coefficient_checks"]
+        assert bounds["tensor_identity"] and bounds["all_passed"]
+        assert max(bounds["fresh_a"], bounds["fresh_b"]) <= bounds["fresh_bound"]
+        assert bounds["relinearize"] <= bounds["relinearize_bound"]
+        assert bounds["rescale"] <= bounds["rescale_bound"]
+        assert len(case["metrics"]) == 7
+        for metric in case["metrics"]:
+            assert len(metric["expected"]) == len(metric["actual"]) == report["profile"]["slots"]
+            errors = [abs(complex(*a) - complex(*b)) for a, b in zip(metric["expected"], metric["actual"])]
+            error = max(errors)
+            assert all(close(a, b) for a, b in zip(errors, metric["slot_absolute_errors"]))
+            assert close(metric["max_absolute_error"], error)
+            assert error <= protocol["absolute_tolerance"]
+            assert metric["passes_precision_target"] is True
+            assert close(metric["inverse_scale"], 1 / metric["scale"])
+            assert close(metric["error_times_scale"], error * metric["scale"])
+            assert metric["passes_inverse_scale"] == (error <= 1 / metric["scale"])
+            if error:
+                assert close(metric["precision_bits"], -math.log2(error))
+    expected_operations = {"keygen", "relin_keygen", "rotation_keygen", "encode", "encrypt_preencoded",
+        "decrypt_decode_fresh", "prepare_one_ciphertext", "add", "rotate_left_one", "decrypt_decode_product",
+        "multiply_tensor", "multiply_relinearize", "multiply_rescale", "multiply_total"}
+    assert set(report["timings"]) == expected_operations
+    for item in report["timings"].values():
+        samples = item["samples_ms"]
+        assert len(samples) == protocol["samples_per_operation"]
+        assert all(math.isfinite(x) and x > 0 for x in samples)
+        assert close(item["mean_ms"], statistics.mean(samples))
+        assert close(item["median_ms"], statistics.median(samples))
+        assert close(item["stddev_sample_ms"], statistics.stdev(samples))
+        assert item["min_ms"] == min(samples) and item["max_ms"] == max(samples)
+        assert item["p95_nearest_rank_ms"] == sorted(samples)[math.ceil(.95 * len(samples)) - 1]
+    stages = [report["timings"]["multiply_" + key]["samples_ms"] for key in ("tensor", "relinearize", "rescale", "total")]
+    assert all(close(a + b + c, total) for a, b, c, total in zip(*stages))
+    print(f"Verified errors, scale comparisons and timing statistics: {path}")
+    return report
+
+
+if __name__ == "__main__":
+    reports = [verify(path) for path in sys.argv[1:]]
+    assert reports, "Supply at least one experiment.json"
+    if len(reports) > 1:
+        assert all(r["source_identity"] == reports[0]["source_identity"] for r in reports[1:])
+        assert all(r["profile"] == reports[0]["profile"] and r["moduli"] == reports[0]["moduli"] for r in reports[1:])
+        print("Implementation identity and all reported parameters match across environments")

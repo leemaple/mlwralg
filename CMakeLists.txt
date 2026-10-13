@@ -34,6 +34,8 @@ target_link_libraries(mlwr PUBLIC mlwr_openfhe)
 target_compile_options(mlwr PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(mlwr_demo apps/mlwr_demo.cpp)
 target_link_libraries(mlwr_demo PRIVATE mlwr)
+add_executable(mlwr_experiment apps/mlwr_experiment.cpp)
+target_link_libraries(mlwr_experiment PRIVATE mlwr)
 
 enable_testing()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)

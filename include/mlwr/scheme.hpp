@@ -32,6 +32,15 @@ struct Ciphertext {
     uint32_t level = 0;
     uint64_t context = 0, key_tag = 0;
 };
+// Tensor stage output before relinearization: 3 linear and 4 quadratic terms.
+// Phase = linear[0] - sum(linear[j+1]*s[j]) + sum(quadratic[i*k+j]*s[i]*s[j]).
+struct TensorCiphertext {
+    Row linear;
+    std::array<RingPoly, k * k> quadratic;
+    double scale = 0, bound = 0;
+    uint32_t level = 0;
+    uint64_t context = 0, key_tag = 0;
+};
 struct RelinearizationKey {
     std::array<Row, k * k> rows;
     uint64_t context = 0, key_tag = 0;
@@ -71,6 +80,11 @@ class ResearchScheme {
     RingPoly Phase(const SecretKey& key, const Ciphertext& ciphertext) const;
     Ciphertext Add(const Ciphertext& a, const Ciphertext& b) const;
     Ciphertext PlainMult(const Ciphertext& a, const Plaintext& b) const;
+    // The three multiplication stages are Tensor -> Relinearize -> Rescale.
+    // Mult remains the compatibility entry point for the first two stages.
+    TensorCiphertext Tensor(const Ciphertext& a, const Ciphertext& b) const;
+    Ciphertext Relinearize(const TensorCiphertext& tensor,
+                          const RelinearizationKey& key) const;
     Ciphertext Mult(const Ciphertext& a, const Ciphertext& b,
                     const RelinearizationKey& key) const;
     Ciphertext Rescale(const Ciphertext& value, uint32_t dropped_towers = 1) const;

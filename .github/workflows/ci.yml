@@ -36,6 +36,12 @@ jobs:
           c++ --version > build/evidence/compiler.txt
           uname -a > build/evidence/platform.txt
           git rev-parse HEAD > build/evidence/commit.txt
+      # Correctness must pass before benchmarking begins. Timings are
+      # per-machine observations, not a cross-machine algorithm speedup.
+      - name: Record stage timings after correctness
+        run: |
+          python3 scripts/run_experiment.py build/evidence/experiment build/mlwr_experiment --samples 15 --warmups 2
+          python3 scripts/verify_experiment.py build/evidence/experiment/experiment.json
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4

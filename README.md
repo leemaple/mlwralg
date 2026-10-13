@@ -32,6 +32,11 @@ python3 scripts/compare_parameters.py build/evidence/openfhe-reference.json buil
 `mlwr_demo` 演示复数向量的加密、平方、重缩放、左移和解密，逐槽打印误差。
 公共接口位于 [scheme.hpp](include/mlwr/scheme.hpp)。
 
+会议要求的参数、逐槽正确性和分阶段计时见 [实验与代码导读](docs/experiment-guide.md)。
+构建后执行 `python3 scripts/run_experiment.py build/evidence/experiment build/mlwr_experiment`，
+即可生成 JSON、误差 CSV 和时间 CSV；先通过正确性检查，再进行 2 次预热与 15 次正式测量。
+乘法接口已显式拆成 `Tensor`、`Relinearize`、`Rescale`，保留原 `Mult` 调用方式。
+
 ## 与 OpenFHE 的参数关系
 
 固定版本为 [v1.6.1 / b59e1f2](https://github.com/openfheorg/openfhe-development/tree/b59e1f291965f14fbee5172cd83a20f5b856204f)，

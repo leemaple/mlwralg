@@ -111,6 +111,16 @@ void Trial(const ResearchScheme& scheme, const Slots& values, const Slots& facto
 
     std::cerr << "MLWR trial " << index + 1 << ": multiplication, switching, rotation\n";
     const auto raw_product = scheme.Mult(a, b, relin);
+    const auto tensor = scheme.Tensor(a, b);
+    const auto staged_product = scheme.Relinearize(tensor, relin);
+    for (std::size_t i = 0; i <= k; ++i)
+        Require(staged_product.c[i] == raw_product.c[i], "Staged and combined multiplication differ");
+    auto bad_tensor = tensor;
+    bad_tensor.key_tag = 0;
+    Reject([&] { scheme.Relinearize(bad_tensor, relin); }, "tensor without key identity");
+    bad_tensor = tensor;
+    bad_tensor.quadratic[0] = fresh.c[0];
+    Reject([&] { scheme.Relinearize(bad_tensor, relin); }, "tensor with wrong quadratic basis");
     Close("ciphertext_multiplication", scheme.Decrypt(keys.secret_key, raw_product), Pointwise(values, factors));
     const auto phase_product = scheme.Phase(keys.secret_key, a) * scheme.Phase(keys.secret_key, b);
     const double p = scheme.basis(a.level)->GetModulus().ConvertToDouble();

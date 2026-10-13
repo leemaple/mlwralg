@@ -261,26 +261,43 @@ Row ResearchScheme::SwitchProduct(const std::vector<RingPoly>& multipliers,
     for (auto& component : sum) component = ScaleAndRound(component, p);
     return sum;
 }
-Ciphertext ResearchScheme::Mult(const Ciphertext& a, const Ciphertext& b,
-                                const RelinearizationKey& key) const {
+TensorCiphertext ResearchScheme::Tensor(const Ciphertext& a, const Ciphertext& b) const {
     Validate(a);
     Validate(b);
-    if (a.key_tag != b.key_tag || a.level != b.level || key.context != id_ || key.key_tag != a.key_tag)
-        throw std::invalid_argument("Multiplication requires matching levels and relinearization key");
-    auto out = a;
-    out.scale *= b.scale;
-    out.bound *= b.bound;
+    if (a.key_tag != b.key_tag || a.level != b.level)
+        throw std::invalid_argument("Tensor product requires matching keys and levels");
+    TensorCiphertext out;
+    out.scale = a.scale * b.scale;
+    out.bound = a.bound * b.bound;
+    out.level = a.level;
+    out.context = id_;
+    out.key_tag = a.key_tag;
     Budget(out.level, out.scale, out.bound);
-    out.c[0] = a.c[0] * b.c[0];
-    for (std::size_t j = 1; j <= k; ++j) out.c[j] = a.c[0] * b.c[j] + a.c[j] * b.c[0];
-    std::vector<RingPoly> tensor;
+    out.linear[0] = a.c[0] * b.c[0];
+    for (std::size_t j = 1; j <= k; ++j) out.linear[j] = a.c[0] * b.c[j] + a.c[j] * b.c[0];
     for (std::size_t i = 1; i <= k; ++i) for (std::size_t j = 1; j <= k; ++j)
-        tensor.push_back(a.c[i] * b.c[j]);
-    auto switched = SwitchProduct(tensor, Rows(key.rows), a.level);
+        out.quadratic[(i - 1) * k + j - 1] = a.c[i] * b.c[j];
+    return out;
+}
+Ciphertext ResearchScheme::Relinearize(const TensorCiphertext& tensor,
+                                      const RelinearizationKey& key) const {
+    if (tensor.context != id_ || !tensor.key_tag || key.context != id_ || key.key_tag != tensor.key_tag)
+        throw std::invalid_argument("Relinearization requires a matching tensor and key");
+    Budget(tensor.level, tensor.scale, tensor.bound);
+    const auto p = basis(tensor.level);
+    for (const auto& c : tensor.linear) Polynomial(c, p);
+    for (const auto& c : tensor.quadratic) Polynomial(c, p);
+    Ciphertext out{tensor.linear, tensor.scale, tensor.bound, tensor.level, id_, tensor.key_tag};
+    auto switched = SwitchProduct({tensor.quadratic.begin(), tensor.quadratic.end()},
+                                  Rows(key.rows), tensor.level);
     // sk = (1,-s); the quadratic contribution is POSITIVE. Source (5-3)
     // prints minus, which fails even for the noiseless constant example.
     for (std::size_t j = 0; j <= k; ++j) out.c[j] += switched[j];
     return out;
+}
+Ciphertext ResearchScheme::Mult(const Ciphertext& a, const Ciphertext& b,
+                                const RelinearizationKey& key) const {
+    return Relinearize(Tensor(a, b), key);
 }
 Ciphertext ResearchScheme::Rescale(const Ciphertext& value, uint32_t dropped) const {
     Validate(value);
