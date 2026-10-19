@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       parameters:
-        description: 'Optional key=value config (one parameter per line); blank runs default checks only'
+        description: 'Optional key=value settings, separated by semicolons; blank uses defaults'
         required: false
         type: string
 
@@ -57,7 +57,7 @@ jobs:
         env:
           MLWR_USER_PARAMETERS: ${{ inputs.parameters }}
         run: |
-          printf '%s\n' "$MLWR_USER_PARAMETERS" > build/user.conf
+          python3 -c 'import os,pathlib; pathlib.Path("build/user.conf").write_text(os.environ["MLWR_USER_PARAMETERS"].replace(";", "\n"))'
           python3 scripts/run_experiment.py build/evidence/experiment-custom build/mlwr_experiment --config build/user.conf
           python3 scripts/verify_experiment.py build/evidence/experiment-custom/experiment.json
       - name: Upload evidence

@@ -92,18 +92,12 @@ security_bits 只是共有 OpenFHE 参数的选择标签。改变 l、k 或把�
 
 以上 17 项都可写入同一份配置文件。命令行形式为键名前加 --，下划线改连字符；例如 precision_bits 对应 --precision-bits，N 对应 --n。配置文件 # 后面的内容是注释，不支持表达式：写 N=32768，不写 N=2^15。
 
-**通过 GitHub 运行。** 打开 https://github.com/leemaple/mlwralg/actions，选择“MLWR and OpenFHE correctness”，点击“Run workflow”，选择 main，在 parameters 输入框粘贴配置内容，一行一个 key=value。空白会运行默认检查；填写内容会在默认检查完成后追加自定义实验。点击运行后，查看 Test and record parameters、Run user parameters 的日志。
+**通过 GitHub 运行。** 打开 https://github.com/leemaple/mlwralg/actions，选择“MLWR and OpenFHE correctness”，点击“Run workflow”，选择 main，在 parameters 输入框粘贴 key=value 设置，用英文分号分隔；也兼容换行。空白会运行默认检查；填写内容会在默认检查完成后追加自定义实验。点击运行后，查看 Test and record parameters、Run user parameters 的日志。
 
 示例网页配置（未写的项使用默认值）：
 
-```ini
-l = 3
-k = 2
-N = 32768
-slots = 16
-samples = 3
-warmups = 1
-key_trials = 1
+```text
+l=3;k=2;N=32768;slots=16;samples=3;warmups=1;key_trials=1
 ```
 
 完成后下载 correctness-evidence-linux。自定义结果位于 experiment-custom；默认实验和自动配置回归位于其他目录。key_trials=1、samples=3 是快速检查设置；正式实验请恢复或增加重复次数。
