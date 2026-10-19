@@ -45,6 +45,7 @@ struct RelinearizationKey {
 struct SwitchingKey {
     std::vector<Row> rows;
     uint64_t context = 0, source_tag = 0, target_tag = 0;
+    uint32_t digit_bits = 0, digit_count = 0;
 };
 struct RotationKey { SwitchingKey switching; uint32_t exponent = 0; };
 

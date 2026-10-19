@@ -26,6 +26,7 @@ void Polynomial(const RingPoly& poly, const RnsParams& params) {
 
 ResearchScheme::ResearchScheme(Profile profile, uint32_t l, uint32_t k)
     : profile_(std::move(profile)), l_(l), k_(k), id_(next_id++) {
+    if (profile_.compact) throw std::invalid_argument("Use CompactScheme for a compact profile");
     if (l_ < 1 || l_ > 8 || k_ < 1 || k_ > 8)
         throw std::invalid_argument("Supported module dimensions: l and k independently in 1..8");
     extended_ = JoinBases(profile_.ciphertext, profile_.auxiliary);

@@ -29,6 +29,12 @@ std::string Key(std::string key) {
     return key;
 }
 void Set(RunOptions& options, const std::string& name, const std::string& value) {
+    if (Key(name) == "compact") {
+        const auto parsed = ParseUnsigned(value);
+        if (parsed > 1) throw std::invalid_argument("compact must be 0 or 1");
+        options.compact = parsed != 0;
+        return;
+    }
     if (Key(name) == "message_bound") {
         std::size_t consumed = 0;
         options.message_bound = std::stod(value, &consumed);
@@ -48,7 +54,9 @@ void Set(RunOptions& options, const std::string& name, const std::string& value)
         {"first_mod_bits", &options.first_mod_bits}, {"samples", &options.samples}, {"warmups", &options.warmups},
         {"security_bits", &options.security_bits}, {"precision_bits", &options.precision_bits},
         {"key_trials", &options.key_trials}, {"message_seed", &options.message_seed},
-        {"smudge_bound", &options.smudge_bound}, {"initial_scale_bits", &options.initial_scale_bits}};
+        {"smudge_bound", &options.smudge_bound}, {"initial_scale_bits", &options.initial_scale_bits},
+        {"divisor_bits", &options.divisor_bits}, {"gadget_bits", &options.gadget_bits},
+        {"public_extra_bits", &options.public_extra_bits}, {"rotation_gadget_bits", &options.rotation_gadget_bits}};
     const auto found = fields.find(Key(name));
     if (found == fields.end()) throw std::invalid_argument("Unknown parameter: " + name);
     *found->second = ParseUnsigned(value);
@@ -76,6 +84,8 @@ void ReadConfig(RunOptions& options, const std::string& path) {
 }  // namespace
 
 Profile RunOptions::MakeProfile() const {
+    if (compact) return CompactProfile(depth, slots, n, scale_bits, first_mod_bits, security_bits,
+                                      divisor_bits, gadget_bits, public_extra_bits, rotation_gadget_bits);
     return OpenFheProfile(depth, slots, n, scale_bits, first_mod_bits, security_bits);
 }
 double RunOptions::EncodingScale() const {
@@ -91,6 +101,10 @@ RunOptions ParseOptions(int argc, char** argv, bool experiment) {
         const std::string arg(argv[i]);
         if (arg == "--help" || arg == "-h") { options.help = true; continue; }
         if (arg == "--print-parameters") { options.print_parameters = true; continue; }
+        if (arg == "--compact") {
+            if (!seen.insert("compact").second) throw std::invalid_argument("Duplicate command option: --compact");
+            overrides.emplace_back("compact", "1"); continue;
+        }
         if (arg.rfind("--", 0) != 0) { positional.push_back(arg); continue; }
         auto key = Key(arg.substr(2));
         if (!seen.insert(key).second) throw std::invalid_argument("Duplicate command option: " + arg);
@@ -115,7 +129,11 @@ RunOptions ParseOptions(int argc, char** argv, bool experiment) {
     if (options.l < 1 || options.l > 8 || options.k < 1 || options.k > 8)
         throw std::invalid_argument("l and k must independently be in 1..8");
     ValidateProfileOptions(options.depth, options.slots, options.n, options.scale_bits,
-                           options.first_mod_bits, options.security_bits);
+                           options.first_mod_bits, options.security_bits, options.compact);
+    if (options.divisor_bits < 16 || options.divisor_bits > 40 || options.gadget_bits < 4 ||
+        options.gadget_bits > 30 || options.public_extra_bits < 16 || options.public_extra_bits > 40 ||
+        options.rotation_gadget_bits < 4 || options.rotation_gadget_bits > 30)
+        throw std::invalid_argument("divisor/public_extra bits must be 16..40; gadget bits 4..30");
     if (options.samples < 3 || options.samples > 1000 || options.warmups < 1 || options.warmups > 100)
         throw std::invalid_argument("samples must be 3..1000; warmups must be 1..100");
     if (options.precision_bits < 1 || options.precision_bits > 50 || options.key_trials < 1 || options.key_trials > 100)
@@ -137,7 +155,11 @@ void WriteOptionsJson(std::ostream& out, const RunOptions& o) {
         << ",\"key_trials\":" << o.key_trials << ",\"message_seed\":" << o.message_seed
         << ",\"message_bound\":" << o.message_bound << ",\"smudge_bound\":" << o.smudge_bound
         << ",\"initial_scale_bits\":" << o.initial_scale_bits
-        << ",\"rotation_steps\":" << o.rotation_steps << '}';
+        << ",\"rotation_steps\":" << o.rotation_steps;
+    if (o.compact) out << ",\"compact\":1,\"divisor_bits\":" << o.divisor_bits
+        << ",\"gadget_bits\":" << o.gadget_bits << ",\"public_extra_bits\":" << o.public_extra_bits
+        << ",\"rotation_gadget_bits\":" << o.rotation_gadget_bits;
+    out << '}';
 }
 void PrintOptionsHelp(std::ostream& out, bool experiment) {
     out << "Usage: " << (experiment ? "mlwr_experiment" : "mlwr_demo") << " [options]\n"
@@ -159,6 +181,12 @@ void PrintOptionsHelp(std::ostream& out, bool experiment) {
         << "  --rotation-steps INT    Positive left, negative right, -65536..65536 (default 1)\n"
         << "  --initial-scale-bits INT  Initial Delta=2^bits; 0 auto or 40..100 (default 0)\n"
         << "  --print-parameters      Print resolved settings and actual profile, without key generation\n"
+        << "  --compact               Paper-inspired pair multiplication with BV decomposition\n"
+        << "  --divisor-bits INT       Compact DCP divisor prime bits, 16..40 (default 20)\n"
+        << "  --gadget-bits INT        Compact BV base bits, 4..30 (default 20)\n"
+        << "  --public-extra-bits INT  Compact public-basis extra prime bits, 16..40 (default 20)\n"
+        << "  --rotation-gadget-bits INT  Compact rotation base bits, 4..30 (default 14)\n"
+        << "  Compact mode permits scale_bits 20..59; scale and first modulus remain explicit.\n"
         << "Priority: defaults < config < command options (regardless of argument order).\n";
 }
 }  // namespace mlwr

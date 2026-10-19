@@ -1,5 +1,6 @@
 #include "mlwr/scheme.hpp"
 #include "mlwr/options.hpp"
+#include "mlwr/compact.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -351,6 +352,7 @@ int main(int argc, char** argv) {
     try {
         const auto options = ParseOptions(argc, argv, true);
         if (options.help) { PrintOptionsHelp(std::cout, true); return 0; }
+        if (options.compact) return mlwr::RunCompactExperiment(std::cout, options);
         const auto samples = options.samples, warmups = options.warmups;
         target_bits = options.precision_bits;
         tolerance = std::ldexp(1.0, -int(target_bits));

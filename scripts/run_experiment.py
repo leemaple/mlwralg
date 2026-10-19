@@ -67,8 +67,10 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("executable", type=Path)
     parser.add_argument("--config", type=Path, help="UTF-8 key=value parameter file")
+    parser.add_argument('--compact', action='store_true', help='Paper-inspired pair/BV construction')
     for option in ("l", "k", "n", "depth", "slots", "scale-bits", "first-mod-bits", "samples", "warmups",
-                   "security-bits", "precision-bits", "key-trials", "message-seed", "smudge-bound", "rotation-steps", "message-bound", "initial-scale-bits"):
+                   "security-bits", "precision-bits", "key-trials", "message-seed", "smudge-bound", "rotation-steps", "message-bound", "initial-scale-bits",
+                   'divisor-bits', 'gadget-bits', 'public-extra-bits', 'rotation-gadget-bits'):
         parser.add_argument("--" + option, type=float if option == "message-bound" else int, default=None)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -84,10 +86,13 @@ def main():
                 "source_commit": command("git", "-C", str(root), "rev-parse", "HEAD"),
                 "source_identity": identity, "environment": environment(executable)}
     invocation = [str(executable)]
+    if args.compact:
+        invocation += ['--compact']
     if args.config is not None:
         invocation += ["--config", str(args.config.resolve())]
     for option in ("l", "k", "n", "depth", "slots", "scale-bits", "first-mod-bits", "samples", "warmups",
-                   "security-bits", "precision-bits", "key-trials", "message-seed", "smudge-bound", "rotation-steps", "message-bound", "initial-scale-bits"):
+                   "security-bits", "precision-bits", "key-trials", "message-seed", "smudge-bound", "rotation-steps", "message-bound", "initial-scale-bits",
+                   'divisor-bits', 'gadget-bits', 'public-extra-bits', 'rotation-gadget-bits'):
         value = getattr(args, option.replace("-", "_"))
         if value is not None:
             invocation += ["--" + option, str(value)]

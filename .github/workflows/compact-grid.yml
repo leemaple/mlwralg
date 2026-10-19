@@ -1,0 +1,60 @@
+name: MLWR compact pair 60 combinations
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compact-grid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        k: [2, 3]
+        n: [4096, 8192, 16384]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+      - name: Cache pinned OpenFHE
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .deps/openfhe-install
+          key: openfhe-b59e1f2-ubuntu24-gcc13-native64-static-noomp-v1
+      - name: Build pinned OpenFHE
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_openfhe.sh
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOpenFHE_DIR="$PWD/.deps/openfhe-install/lib/OpenFHE"
+          cmake --build build --parallel 3
+      - name: Regression and compact algebra checks
+        run: ctest --test-dir build --output-on-failure
+      - name: Run all 60 compact combinations
+        run: python3 scripts/run_parameter_grid.py build/evidence/compact-grid build/mlwr_experiment --compact --samples 3 --warmups 1 --key-trials 3 --only-k ${{ matrix.k }} --only-n ${{ matrix.n }}
+      - name: Verify observations independently
+        run: python3 scripts/verify_parameter_grid.py build/evidence/compact-grid --allow-subset
+      - name: Upload all compact evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compact-part-k${{ matrix.k }}-N${{ matrix.n }}
+          path: build/evidence/compact-grid/
+  aggregate:
+    needs: compact-grid
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: compact-part-*
+          path: partials
+      - name: Merge and audit all 60 combinations
+        run: python3 scripts/merge_parameter_grid.py compact-grid partials/compact-part-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compact-grid-linux-complete
+          path: compact-grid/

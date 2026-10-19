@@ -37,6 +37,21 @@ def verify(path):
     assert n >= 1024 and n <= 131072 and n & (n - 1) == 0
     assert 1 <= slots <= n // 2 and slots & (slots - 1) == 0
     assert 1 <= report["l"] <= 8 and 1 <= report["k"] <= 8
+    if report.get('schema_version',1) >= 4:
+        assert profile['construction_mode'] == 'compact_pair_bv'
+        assert profile['key_switch_technique'] == 'gadget_small_P' and profile['large_digits'] == 0
+        assert report['requested_parameters']['compact'] == 1
+        # This batch uses 128 classic/ternary limits, including the actual
+        # public-key modulus T rather than the smaller post-DCP modulus.
+        if report['requested_parameters']['security_bits'] == 128:
+            limits={1024:27,2048:54,4096:109,8192:218,16384:438,32768:881,65536:1747,131072:3523}
+            assert profile['checked_public_modulus_bits'] <= limits[n]
+        public_q=int(report['moduli']['T_public']['modulus'])
+        qp=int(report['moduli']['P_main']['modulus'])*int(report['moduli']['Q_auxiliary']['modulus'])
+        assert max(public_q.bit_length(),qp.bit_length()) == profile['checked_public_modulus_bits']
+        assert public_q > int(report['moduli']['P_main']['modulus'])
+        divisor=int(report['moduli']['DCP_divisor'])
+        assert int(profile['ciphertext_basis'][-1]['prime']) == divisor
     if "requested_parameters" in report:
         requested = report["requested_parameters"]
         assert requested["l"] == report["l"] and requested["k"] == report["k"]
@@ -54,6 +69,20 @@ def verify(path):
     for case in report["correctness"]:
         bounds = case["coefficient_checks"]
         assert bounds["tensor_identity"] and bounds["all_passed"]
+        if report.get('schema_version',1) >= 4:
+            assert bounds['dcp_rcb_identity'] and bounds['rs2_rcb_identity']
+            assert bounds['high_switch_noise'] <= bounds['single_switch_bound']
+            assert bounds['low_switch_noise'] <= bounds['single_switch_bound']
+            checks=[case['headroom_check']]+case['depth_circuit']['headroom_checks']
+            assert len(checks) == profile['depth']+1
+            for check in checks:
+                assert check['passed'] is True
+                assert check['integer_pair_consistent'] is True
+                assert math.isfinite(check['omitted_low_product_slot_max']) and check['omitted_low_product_slot_max']>=0
+                assert check['coefficient_bound'] < check['wide_half_modulus']
+                assert check['observed_or_bounded_norm'] < check['active_half_modulus']
+                if not check['exact_wide_replay']:
+                    assert check['observed_or_bounded_norm'] == check['coefficient_bound']
         assert max(bounds["fresh_a"], bounds["fresh_b"]) <= bounds["fresh_bound"]
         assert bounds["relinearize"] <= bounds["relinearize_bound"]
         assert bounds["rescale"] <= bounds["rescale_bound"]
@@ -74,6 +103,12 @@ def verify(path):
                 # the expectation rather than trusting its reported value.
                 assert all(abs(a - complex(*b)) <= 1e-13 for a, b in zip(expected, metric['expected']))
                 verify_metric(metric, slots, protocol['absolute_tolerance'])
+            if report.get('schema_version',1)>=4:
+                rotation=circuit['lowest_rotation_metric']
+                verify_metric(rotation,slots,protocol['absolute_tolerance'])
+                assert rotation['level']==profile['depth']+1
+                shifted=expected[protocol['rotation_steps']%slots:]+expected[:protocol['rotation_steps']%slots]
+                assert all(abs(a-complex(*b))<=1e-13 for a,b in zip(shifted,rotation['expected']))
     expected_operations = {"keygen", "relin_keygen", "rotation_keygen", "encode", "encrypt_preencoded",
         "decrypt_decode_fresh", "prepare_one_ciphertext", "add", "rotate" if report.get("schema_version", 1) >= 2 else "rotate_left_one", "decrypt_decode_product",
         "multiply_tensor", "multiply_relinearize", "multiply_rescale", "multiply_total"}

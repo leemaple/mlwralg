@@ -62,6 +62,10 @@ GitHub Actions 的手动运行入口支持在 `parameters` 字段粘贴配置内
 **MLWR 60 parameter combinations** 即可一键运行。新版实验会实际验证 depth 层连续平方，
 输出逐层误差及完整电路时间；不满足安全参数检查的组合单独保留拒绝证据。
 
+10 月 19 日会议后的低模数改造见 [compact 模式及参数说明](docs/compact-research.md)。
+这是单独选择的论文启发版本，包含高低密文乘法、分解式密钥切换、小辅助模数及实际环绕检查。
+配置位于 `configs/compact/`；GitHub Actions 选择 **MLWR compact pair 60 combinations** 可运行完整批次。
+
 ## 与 OpenFHE 的参数关系
 
 固定版本为 [v1.6.1 / b59e1f2](https://github.com/openfheorg/openfhe-development/tree/b59e1f291965f14fbee5172cd83a20f5b856204f)，

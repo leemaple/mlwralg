@@ -28,13 +28,13 @@ endif()
 add_executable(openfhe_reference apps/openfhe_reference.cpp)
 target_link_libraries(openfhe_reference PRIVATE mlwr)
 
-add_library(mlwr src/rns.cpp src/profile.cpp src/scheme.cpp src/options.cpp)
+add_library(mlwr src/rns.cpp src/profile.cpp src/scheme.cpp src/options.cpp src/compact.cpp)
 target_include_directories(mlwr PUBLIC include)
 target_link_libraries(mlwr PUBLIC mlwr_openfhe)
 target_compile_options(mlwr PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(mlwr_demo apps/mlwr_demo.cpp)
 target_link_libraries(mlwr_demo PRIVATE mlwr)
-add_executable(mlwr_experiment apps/mlwr_experiment.cpp)
+add_executable(mlwr_experiment apps/mlwr_experiment.cpp apps/compact_experiment.cpp)
 target_link_libraries(mlwr_experiment PRIVATE mlwr)
 
 enable_testing()
@@ -66,3 +66,13 @@ add_test(NAME parameter_configuration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_BINARY_DIR}/evidence/parameter-cli.json ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_parameters.py $<TARGET_FILE:mlwr_demo>)
 set_tests_properties(adjustable_parameters parameter_configuration PROPERTIES TIMEOUT 600)
+add_executable(compact_checks tests/compact_checks.cpp)
+target_link_libraries(compact_checks PRIVATE mlwr)
+add_test(NAME compact_pair_contract COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/compact-contract.json $<TARGET_FILE:compact_checks>)
+set_tests_properties(compact_pair_contract PROPERTIES TIMEOUT 600)
+add_test(NAME compact_parameter_configuration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/compact-cli.json ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_compact_cli.py $<TARGET_FILE:mlwr_experiment>)

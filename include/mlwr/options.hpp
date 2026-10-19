@@ -14,6 +14,9 @@ struct RunOptions {
     int32_t rotation_steps = 1;
     double message_bound = 2;
     bool help = false, print_parameters = false;
+    bool compact = false;
+    uint32_t divisor_bits = 20, gadget_bits = 20, public_extra_bits = 20;
+    uint32_t rotation_gadget_bits = 14;
     Profile MakeProfile() const;
     double EncodingScale() const;
 };

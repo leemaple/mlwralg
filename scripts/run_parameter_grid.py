@@ -67,7 +67,7 @@ def make_report(output, summary):
     machine = summary['environment']
     text = f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>MLWR 60 组参数测试</title>
 <style>body{{font:16px/1.65 system-ui,sans-serif;max-width:1450px;margin:32px auto;padding:0 20px;color:#171717}}table{{border-collapse:collapse;width:100%;font-size:14px}}th,td{{border:1px solid #ccc;padding:8px;text-align:left}}th{{background:#eee}}a{{color:#1449a0}}code{{background:#eee;padding:2px 5px}}.numbers{{font-size:22px;font-weight:600}}small{{color:#555}}</style>
-<h1>MLWR：60 组参数测试结果</h1><p class="numbers">已完成 {len(rows)}/60 组；通过 {counts.get('passed',0)} 组；安全参数检查拒绝 {counts.get('security_rejected',0)} 组；其他失败 {sum(v for k,v in counts.items() if k not in ('passed','security_rejected'))} 组。</p>
+<h1>MLWR：60 组参数测试结果</h1><p class="numbers">已完成 {len(rows)}/{summary["expected_cases"]} 组；通过 {counts.get('passed',0)} 组；安全参数检查拒绝 {counts.get('security_rejected',0)} 组；其他失败 {sum(v for k,v in counts.items() if k not in ('passed','security_rejected'))} 组。</p>
 <p>固定 security_bits=128、l=2；k∈{{2,3}}，N∈{{4096,8192,16384}}，depth=1–10。其余配置保持默认：slots=8、scale_bits=50、first_mod_bits=60、单 digit HYBRID；每组 {summary['base_parameters']['key_trials']} 把独立新密钥、每把 3 类消息；每项预热 {summary['base_parameters']['warmups']} 次、正式采样 {summary['base_parameters']['samples']} 次；目标误差 ≤ 2⁻²⁰。</p>
 <p>环境：{html.escape(machine['system'] + ' / ' + machine.get('cpu', machine['architecture']))}。不同机器的耗时分别报告，不混合计算。代码提交：<code>{summary['source_commit']}</code>。</p>
 <p>通过组完成加解密、一次乘法、张量积恒等式及系数误差检查，并实际执行 depth 层连续平方（每层：张量积→重线性化→重缩放），逐层解密与明文 x^(2^层数) 比较。深度电路使用幅度≤1 的实数、单位圆复数和随机消息。它验证这三类测试电路，不代表任意同深度电路。</p>
@@ -76,6 +76,12 @@ def make_report(output, summary):
 <p><a href="summary.csv">60 组汇总 CSV</a> · <a href="timings.csv">各阶段完整计时 CSV</a> · <a href="summary.json">完整索引 JSON</a>。每组目录包含配置、原始日志；通过组另有 experiment.json、逐槽误差、各层误差、实际模数与计时原始样本。</p>
 <table><thead><tr><th>l</th><th>k</th><th>N</th><th>深度</th><th>结果</th><th>建议最低 N</th><th>逐层最大误差</th><th>完整电路均值/ms</th><th>依据</th></tr></thead><tbody>{''.join(body)}</tbody></table>
 <p><small>生成时间 {summary['completed_utc']}；实现 SHA-256 {summary['source_identity']['sha256']}。1/Δ 的严格比较另列于 CSV 和每组原始数据中，不以 20 位目标代替。</small></p></html>'''
+    if summary.get('compact'):
+        text=text.replace('MLWR：60 组参数测试结果','MLWR：低模数版本 60 组参数测试结果')
+        text=text.replace('其余配置保持默认：slots=8、scale_bits=50、first_mod_bits=60、单 digit HYBRID；',
+            '采用论文启发的高低密文乘法、分解式密钥切换与小辅助模数；N=4096/8192/16384 的配置分别见每组 requested.conf；')
+        text=text.replace('张量积→重线性化→重缩放','Tensor2→Relin2→RS2')
+        text=text.replace('下表建议 N 只针对当前 OpenFHE 配置。','安全检查同时包含完整主模数×辅助模数及公开公钥模数 T；下表建议 N 只针对当前配置。')
     (output / 'report.html').write_text(text, encoding='utf-8')
 
 
@@ -87,7 +93,12 @@ def main():
     parser.add_argument('--warmups', type=int, default=2)
     parser.add_argument('--key-trials', type=int, default=3)
     parser.add_argument('--timeout', type=int, default=1800, help='Seconds per accepted configuration')
+    parser.add_argument('--compact', action='store_true', help='Use per-N paper-inspired compact profiles')
+    parser.add_argument('--only-k',type=int,choices=(2,3))
+    parser.add_argument('--only-n',type=int,choices=(4096,8192,16384))
     args = parser.parse_args()
+    selected=[g for g in GRID if (args.only_k is None or g[1]==args.only_k) and
+              (args.only_n is None or g[2]==args.only_n)]
     if not (3 <= args.samples <= 1000 and 1 <= args.warmups <= 100 and 1 <= args.key_trials <= 100 and args.timeout > 0):
         parser.error('Invalid repetitions or timeout')
     root = Path(__file__).resolve().parents[1]
@@ -103,18 +114,31 @@ def main():
             key, value = (x.strip() for x in line.split('=', 1))
             base[key] = float(value) if key == 'message_bound' else int(value)
     base.update(security_bits=128, l=2, samples=args.samples, warmups=args.warmups, key_trials=args.key_trials)
+    families = {}
+    if args.compact:
+        for n in (4096,8192,16384):
+            settings = {}
+            for line in (root / f'configs/compact/n{n}.conf').read_text().splitlines():
+                line=line.split('#',1)[0].strip()
+                if line:
+                    key,value=(x.strip() for x in line.split('=',1))
+                    settings[key]=float(value) if key=='message_bound' else int(value)
+            settings.update(security_bits=128,l=2,samples=args.samples,warmups=args.warmups,key_trials=args.key_trials)
+            families[str(n)] = settings
     summary = {'schema_version': 1, 'started_utc': datetime.now(timezone.utc).isoformat(),
                'source_commit': command('git', '-C', str(root), 'rev-parse', 'HEAD'),
                'source_identity': source_identity(root), 'environment': environment(executable),
-               'base_parameters': base, 'expected_cases': len(GRID), 'results': [],
+               'base_parameters': base, 'expected_cases': len(selected), 'results': [],
+               'selection': {'k':args.only_k,'N':args.only_n},
+               'compact': args.compact, 'per_ring_parameters': families,
                'runner_sha256': {name: digest(root / 'scripts' / name) for name in
                    ('run_parameter_grid.py', 'run_experiment.py', 'verify_experiment.py', 'verify_parameter_grid.py')}}
     (output / 'run-metadata.json').write_text(json.dumps(summary, indent=2) + '\n')
-    for index, (l, k, n, depth) in enumerate(GRID, 1):
+    for index, (l, k, n, depth) in enumerate(selected, 1):
         label = case_id(l, k, n, depth)
         folder = output / 'cases' / label
         folder.mkdir(parents=True)
-        config = dict(base, l=l, k=k, N=n, depth=depth)
+        config = dict(families.get(str(n),base), l=l, k=k, N=n, depth=depth)
         config_path = folder / 'requested.conf'
         config_path.write_text(''.join(f'{key} = {value}\n' for key, value in config.items()))
         result = {'case_id': label, 'l': l, 'k': k, 'N': n, 'depth': depth, 'security_bits': 128,
@@ -164,12 +188,12 @@ def main():
         result['evidence_sha256'] = {str(p.relative_to(folder)): digest(p) for p in sorted(folder.iterdir()) if p.is_file()}
         (folder / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         summary['results'].append(result)
-        print(f'[{index}/60] {label}: {result["status"]}', flush=True)
+        print(f'[{index}/{len(selected)}] {label}: {result["status"]}', flush=True)
     assert source_identity(root) == summary['source_identity'], 'Source changed during grid run'
     assert digest(executable) == summary['environment']['executable_sha256'], 'Executable changed during grid run'
     summary['completed_utc'] = datetime.now(timezone.utc).isoformat()
     summary['counts'] = dict(Counter(r['status'] for r in summary['results']))
-    summary['all_combinations_passed'] = summary['counts'].get('passed') == len(GRID)
+    summary['all_combinations_passed'] = summary['counts'].get('passed') == len(selected)
     summary['all_combinations_attempted'] = True
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     make_report(output, summary)
