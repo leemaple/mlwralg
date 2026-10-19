@@ -96,9 +96,11 @@ def main():
     parser.add_argument('--compact', action='store_true', help='Use per-N paper-inspired compact profiles')
     parser.add_argument('--only-k',type=int,choices=(2,3))
     parser.add_argument('--only-n',type=int,choices=(4096,8192,16384))
+    parser.add_argument('--only-depth',type=int,choices=range(1,11))
     args = parser.parse_args()
     selected=[g for g in GRID if (args.only_k is None or g[1]==args.only_k) and
-              (args.only_n is None or g[2]==args.only_n)]
+              (args.only_n is None or g[2]==args.only_n) and
+              (args.only_depth is None or g[3]==args.only_depth)]
     if not (3 <= args.samples <= 1000 and 1 <= args.warmups <= 100 and 1 <= args.key_trials <= 100 and args.timeout > 0):
         parser.error('Invalid repetitions or timeout')
     root = Path(__file__).resolve().parents[1]
@@ -129,7 +131,7 @@ def main():
                'source_commit': command('git', '-C', str(root), 'rev-parse', 'HEAD'),
                'source_identity': source_identity(root), 'environment': environment(executable),
                'base_parameters': base, 'expected_cases': len(selected), 'results': [],
-               'selection': {'k':args.only_k,'N':args.only_n},
+               'selection': {'k':args.only_k,'N':args.only_n,'depth':args.only_depth},
                'compact': args.compact, 'per_ring_parameters': families,
                'runner_sha256': {name: digest(root / 'scripts' / name) for name in
                    ('run_parameter_grid.py', 'run_experiment.py', 'verify_experiment.py', 'verify_parameter_grid.py')}}

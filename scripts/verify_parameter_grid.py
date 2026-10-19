@@ -16,7 +16,8 @@ def check(path,allow_subset=False):
     expected = set(itertools.product((2,), (2, 3), (4096, 8192, 16384), range(1, 11)))
     selected=report.get('selection',{'k':None,'N':None})
     expected={g for g in expected if (selected['k'] is None or g[1]==selected['k']) and
-              (selected['N'] is None or g[2]==selected['N'])}
+              (selected['N'] is None or g[2]==selected['N']) and
+              (selected.get('depth') is None or g[3]==selected['depth'])}
     assert allow_subset or len(expected)==60,'A partial job is not a complete 60-case result'
     rows = report['results']
     assert len(rows) == len(expected) == report['expected_cases']

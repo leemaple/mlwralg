@@ -9,10 +9,11 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 20
       matrix:
         k: [2, 3]
         n: [4096, 8192, 16384]
+        depth: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools
@@ -34,14 +35,14 @@ jobs:
       - name: Regression and compact algebra checks
         run: ctest --test-dir build --output-on-failure
       - name: Run all 60 compact combinations
-        run: python3 scripts/run_parameter_grid.py build/evidence/compact-grid build/mlwr_experiment --compact --samples 3 --warmups 1 --key-trials 3 --only-k ${{ matrix.k }} --only-n ${{ matrix.n }}
+        run: python3 scripts/run_parameter_grid.py build/evidence/compact-grid build/mlwr_experiment --compact --samples 3 --warmups 1 --key-trials 3 --only-k ${{ matrix.k }} --only-n ${{ matrix.n }} --only-depth ${{ matrix.depth }}
       - name: Verify observations independently
         run: python3 scripts/verify_parameter_grid.py build/evidence/compact-grid --allow-subset
       - name: Upload all compact evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: compact-part-k${{ matrix.k }}-N${{ matrix.n }}
+          name: compact-part-k${{ matrix.k }}-N${{ matrix.n }}-d${{ matrix.depth }}
           path: build/evidence/compact-grid/
   aggregate:
     needs: compact-grid
