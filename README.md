@@ -57,6 +57,11 @@ python3 scripts/verify_experiment.py build/evidence/my-run/experiment.json
 GitHub Actions 的手动运行入口支持在 `parameters` 字段粘贴配置内容，在 Linux 上运行并下载结果。
 默认历史回归仍固定原参数；新增参数回归独立测试可变维度、环维度和配置错误。
 
+批量测试 128 / l=2 / k=2、3 / N=4096、8192、16384 / 深度 1–10 的全部 60 组，
+见 [60 组参数测试说明](docs/parameter-grid.md)。GitHub Actions 选择
+**MLWR 60 parameter combinations** 即可一键运行。新版实验会实际验证 depth 层连续平方，
+输出逐层误差及完整电路时间；不满足安全参数检查的组合单独保留拒绝证据。
+
 ## 与 OpenFHE 的参数关系
 
 固定版本为 [v1.6.1 / b59e1f2](https://github.com/openfheorg/openfhe-development/tree/b59e1f291965f14fbee5172cd83a20f5b856204f)，

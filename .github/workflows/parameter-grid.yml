@@ -1,0 +1,44 @@
+name: MLWR 60 parameter combinations
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parameter-grid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+      - name: Cache pinned OpenFHE
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .deps/openfhe-install
+          key: openfhe-b59e1f2-ubuntu24-gcc13-native64-static-noomp-v1
+      - name: Build pinned OpenFHE
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_openfhe.sh
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOpenFHE_DIR="$PWD/.deps/openfhe-install/lib/OpenFHE"
+          cmake --build build --parallel 4
+      - name: Regression checks before measurements
+        run: ctest --test-dir build --output-on-failure
+      - name: Attempt all 60 configurations, including security rejections
+        run: python3 scripts/run_parameter_grid.py build/evidence/grid-60 build/mlwr_experiment
+      - name: Independently verify coverage and observations
+        run: python3 scripts/verify_parameter_grid.py build/evidence/grid-60
+      - name: Upload all results and rejection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parameter-grid-linux
+          path: |
+            build/evidence/grid-60/
+            build/Testing/Temporary/LastTest.log

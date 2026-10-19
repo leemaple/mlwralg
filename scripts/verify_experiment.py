@@ -10,6 +10,24 @@ def close(a, b):
     return math.isclose(a, b, rel_tol=2e-12, abs_tol=1e-25)
 
 
+def verify_metric(metric, slots, tolerance):
+    assert len(metric['expected']) == len(metric['actual']) == len(metric['slot_absolute_errors']) == slots
+    errors = [abs(complex(*a) - complex(*b)) for a, b in zip(metric['expected'], metric['actual'])]
+    error = max(errors)
+    assert all(close(a, b) for a, b in zip(errors, metric['slot_absolute_errors']))
+    assert close(metric['max_absolute_error'], error)
+    assert error <= tolerance and metric['passes_precision_target'] is True
+    assert math.isfinite(metric['scale']) and metric['scale'] > 0
+    assert close(metric['log2_scale'], math.log2(metric['scale']))
+    assert close(metric['inverse_scale'], 1 / metric['scale'])
+    assert close(metric['error_times_scale'], error * metric['scale'])
+    assert metric['passes_inverse_scale'] == (error <= 1 / metric['scale'])
+    if error == 0:
+        assert metric['precision_bits'] is None
+    else:
+        assert close(metric['precision_bits'], -math.log2(error))
+
+
 def verify(path):
     report = json.loads(Path(path).read_text())
     protocol = report["protocol"]
@@ -41,21 +59,26 @@ def verify(path):
         assert bounds["rescale"] <= bounds["rescale_bound"]
         assert len(case["metrics"]) == 7
         for metric in case["metrics"]:
-            assert len(metric["expected"]) == len(metric["actual"]) == report["profile"]["slots"]
-            errors = [abs(complex(*a) - complex(*b)) for a, b in zip(metric["expected"], metric["actual"])]
-            error = max(errors)
-            assert all(close(a, b) for a, b in zip(errors, metric["slot_absolute_errors"]))
-            assert close(metric["max_absolute_error"], error)
-            assert error <= protocol["absolute_tolerance"]
-            assert metric["passes_precision_target"] is True
-            assert close(metric["inverse_scale"], 1 / metric["scale"])
-            assert close(metric["error_times_scale"], error * metric["scale"])
-            assert metric["passes_inverse_scale"] == (error <= 1 / metric["scale"])
-            if error:
-                assert close(metric["precision_bits"], -math.log2(error))
+            verify_metric(metric, slots, protocol['absolute_tolerance'])
+        if report.get('schema_version', 1) >= 3:
+            circuit = case['depth_circuit']
+            assert circuit['circuit'] == 'repeated_square'
+            assert len(circuit['input']) == slots
+            expected = [complex(*x) for x in circuit['input']]
+            assert all(abs(x) <= min(1., requested['message_bound']) + 1e-15 for x in expected)
+            assert len(circuit['metrics']) == profile['depth']
+            for layer, metric in enumerate(circuit['metrics'], 1):
+                expected = [x * x for x in expected]
+                assert metric['operation'] == 'depth_square' and metric['level'] == layer + 1
+                # Reconstruct the plaintext circuit independently, including
+                # the expectation rather than trusting its reported value.
+                assert all(abs(a - complex(*b)) <= 1e-13 for a, b in zip(expected, metric['expected']))
+                verify_metric(metric, slots, protocol['absolute_tolerance'])
     expected_operations = {"keygen", "relin_keygen", "rotation_keygen", "encode", "encrypt_preencoded",
         "decrypt_decode_fresh", "prepare_one_ciphertext", "add", "rotate" if report.get("schema_version", 1) >= 2 else "rotate_left_one", "decrypt_decode_product",
         "multiply_tensor", "multiply_relinearize", "multiply_rescale", "multiply_total"}
+    if report.get('schema_version', 1) >= 3:
+        expected_operations.add('depth_square_circuit')
     assert set(report["timings"]) == expected_operations
     for item in report["timings"].values():
         samples = item["samples_ms"]

@@ -22,6 +22,8 @@ default = json.loads(run('--config', root / 'configs/default.conf', '--print-par
 fixture = json.loads((root / 'tests/fixtures/parameters.json').read_text())
 assert default['profile'] == fixture['profile'], 'Default numerical profile changed'
 run('--help')
+deep = json.loads(run('--depth', 10, '--n', 0, '--print-parameters').stdout)
+assert deep['profile']['depth'] == 10 and deep['profile']['rlwe_security_table'] == 'HEStd_128_classic'
 with tempfile.TemporaryDirectory() as directory:
     path = Path(directory) / '参数 配置.conf'
     path.write_text('\ufeff# 中文注释\r\nl = 3\r\nk = 1\r\nN = 65536\r\nslots = 16\r\n'
@@ -40,7 +42,7 @@ with tempfile.TemporaryDirectory() as directory:
         path.write_text(text)
         run('--config', path, '--print-parameters', fail=True)
 for args in [('--l', 0), ('--k', 9), ('--n', 1000), ('--n', 1024),
-             ('--slots', 3), ('--n', 16384, '--slots', 16384), ('--depth', 0),
+             ('--slots', 3), ('--n', 16384, '--slots', 16384), ('--depth', 0), ('--depth', 11),
              ('--scale-bits', 40), ('--scale-bits', 60), ('--first-mod-bits', 50),
              ('--samples', 2), ('--warmups', 0), ('--security-bits', 0),
              ('--precision-bits', 51), ('--key-trials', 0), ('--message-bound', 'nan'),

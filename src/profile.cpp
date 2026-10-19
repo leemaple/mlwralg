@@ -10,8 +10,8 @@ void ValidateProfileOptions(uint32_t depth, uint32_t slots, uint32_t ring_dimens
                             uint32_t scale_bits, uint32_t first_mod_bits, uint32_t security_bits) {
     if (security_bits != 128 && security_bits != 192 && security_bits != 256)
         throw std::invalid_argument("security_bits must be 128, 192 or 256 (OpenFHE RLWE table only)");
-    if (depth < 1 || depth > 6 || slots == 0 || (slots & (slots - 1)) || slots > 65536)
-        throw std::invalid_argument("Supported profile: depth 1..6, power-of-two slots in 1..65536");
+    if (depth < 1 || depth > 10 || slots == 0 || (slots & (slots - 1)) || slots > 65536)
+        throw std::invalid_argument("Supported profile: depth 1..10, power-of-two slots in 1..65536");
     if (ring_dimension && (ring_dimension < 1024 || ring_dimension > 131072 ||
                           (ring_dimension & (ring_dimension - 1))))
         throw std::invalid_argument("N must be 0 (automatic) or a power of two in 1024..131072");

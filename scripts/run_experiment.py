@@ -76,7 +76,8 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     for name in ("experiment.json", "native-output.json", "timings.csv", "timing-samples.csv",
-                 "correctness.csv", "slots.csv", "failure.json", "resolved.conf", "parameters.csv"):
+                 "correctness.csv", "slots.csv", "depth-correctness.csv", "depth-slots.csv",
+                 "failure.json", "resolved.conf", "parameters.csv"):
         (output / name).unlink(missing_ok=True)
     identity = source_identity(root)
     metadata = {"started_utc": datetime.now(timezone.utc).isoformat(),
@@ -138,6 +139,19 @@ def main():
               "passes_precision_target", "passes_inverse_scale"], metric_rows)
     write_csv(output / "slots.csv", ["trial", "case", "operation", "slot", "expected_real", "expected_imag",
               "actual_real", "actual_imag", "absolute_error"], slot_rows)
+    depth_rows, depth_slots = [], []
+    for case in report['correctness']:
+        for layer, metric in enumerate(case.get('depth_circuit', {}).get('metrics', []), 1):
+            prefix = [case['trial'], case['case'], layer]
+            depth_rows.append(prefix + [metric[key] for key in ('level', 'scale', 'max_absolute_error',
+                'precision_bits', 'inverse_scale', 'error_times_scale', 'passes_precision_target', 'passes_inverse_scale')])
+            for i, (expected, actual, error) in enumerate(zip(metric['expected'], metric['actual'], metric['slot_absolute_errors'])):
+                depth_slots.append(prefix + [i] + expected + actual + [error])
+    write_csv(output / 'depth-correctness.csv', ['trial', 'case', 'layer', 'level', 'scale',
+        'max_absolute_error', 'precision_bits', 'inverse_scale', 'error_times_scale',
+        'passes_precision_target', 'passes_inverse_scale'], depth_rows)
+    write_csv(output / 'depth-slots.csv', ['trial', 'case', 'layer', 'slot', 'expected_real',
+        'expected_imag', 'actual_real', 'actual_imag', 'absolute_error'], depth_slots)
     print(f"Recorded {len(report['correctness'])} cases and {len(report['timings'])} timed operations in {output}")
 
 

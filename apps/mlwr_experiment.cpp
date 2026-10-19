@@ -63,7 +63,12 @@ void Values(std::ostream& out, const Slots& values) {
 void Metric(std::ostream& out, const char* name, const Slots& actual,
             const Slots& expected, double scale, uint32_t level) {
     const auto error = Error(actual, expected);
-    Require(error <= tolerance, "Decoded error exceeds the configured precision target");
+    if (error > tolerance) {
+        std::ostringstream message;
+        message << std::setprecision(17) << name << " at level " << level
+                << ": decoded error " << error << " exceeds target " << tolerance;
+        throw std::runtime_error(message.str());
+    }
     out << "{\"operation\":\"" << name << "\",\"level\":" << level
         << ",\"scale\":" << scale << ",\"log2_scale\":" << std::log2(scale)
         << ",\"inverse_scale\":" << 1 / scale << ",\"max_absolute_error\":" << error
@@ -82,9 +87,13 @@ void Metric(std::ostream& out, const char* name, const Slots& actual,
     out << "]}";
 }
 void BasisJson(std::ostream& out, const RnsParams& basis) {
+    // The source basis can exceed double's exponent range at depth 10.
+    // Shift the integer first; never emit infinity into JSON.
+    const auto bits = basis->GetModulus().GetMSB();
+    const auto shift = bits > 53 ? bits - 53 : 0;
+    const auto log_modulus = std::log2((basis->GetModulus() >> shift).ConvertToDouble()) + shift;
     out << "{\"modulus\":\"" << basis->GetModulus() << "\",\"bit_length\":"
-        << basis->GetModulus().GetMSB() << ",\"log2_modulus\":"
-        << std::log2(basis->GetModulus().ConvertToDouble()) << ",\"primes\":[";
+        << bits << ",\"log2_modulus\":" << log_modulus << ",\"primes\":[";
     for (std::size_t i = 0; i < basis->GetParams().size(); ++i) {
         if (i) out << ',';
         out << '\"' << basis->GetParams()[i]->GetModulus() << '\"';
@@ -96,6 +105,44 @@ Slots Repeat(const Slots& pattern, uint32_t count) {
     Slots result(count);
     for (uint32_t i = 0; i < count; ++i) result[i] = pattern[i % pattern.size()];
     return result;
+}
+
+Slots DepthInput(const RunOptions& options, unsigned example) {
+    auto values = Repeat({-1., -.999, -.5, 0., .25, .75, .99, 1.}, options.slots);
+    std::mt19937 generator(options.message_seed);
+    std::uniform_int_distribution<int> draw(-1024, 1024);
+    const auto bound = std::min(1., options.message_bound);
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (example == 1) values[i] = std::polar(1., .173 * (i + 1));
+        if (example == 2) {
+            values[i] = {draw(generator) / 1024., draw(generator) / 1024.};
+            values[i] /= std::max(1., std::abs(values[i]));
+        }
+        values[i] *= bound;
+        // Guard against a one-ulp norm overshoot from polar/normalization.
+        while (std::abs(values[i]) > bound) values[i] *= std::nextafter(1., 0.);
+    }
+    return values;
+}
+
+void DepthCorrectness(std::ostream& out, const ResearchScheme& scheme, const RunOptions& options,
+                      const KeyPair& keys, const RelinearizationKey& relin, unsigned example) {
+    const auto input = DepthInput(options, example);
+    auto expected = input;
+    auto value = scheme.Rescale(scheme.Encrypt(keys.public_key,
+        scheme.Encode(input, 0, std::min(1., options.message_bound), options.EncodingScale())));
+    out << "{\"circuit\":\"repeated_square\",\"input\":";
+    Values(out, input);
+    out << ",\"metrics\":[";
+    for (unsigned layer = 1; layer <= options.depth; ++layer) {
+        std::cerr << "Depth correctness: layer " << layer << '/' << options.depth << '\n';
+        value = scheme.Rescale(scheme.Mult(value, value, relin));
+        expected = Pointwise(expected, expected);
+        if (layer > 1) out << ',';
+        Metric(out, "depth_square", scheme.Decrypt(keys.secret_key, value, options.smudge_bound),
+               expected, value.scale, value.level);
+    }
+    out << "]}";
 }
 
 void Correctness(std::ostream& out, const ResearchScheme& scheme, const RunOptions& options) {
@@ -174,7 +221,9 @@ void Correctness(std::ostream& out, const ResearchScheme& scheme, const RunOptio
                    relinearized.scale, relinearized.level); out << ',';
             Metric(out, "multiply_after_rescale", decrypt(keys.secret_key, product), expected,
                    product.scale, product.level);
-            out << "],\"coefficient_checks\":{\"tensor_identity\":true,\"fresh_a\":" << fresh_x_noise
+            out << "],\"depth_circuit\":";
+            DepthCorrectness(out, scheme, options, keys, relin, example);
+            out << ",\"coefficient_checks\":{\"tensor_identity\":true,\"fresh_a\":" << fresh_x_noise
                 << ",\"fresh_b\":" << fresh_y_noise << ",\"fresh_bound\":" << fresh_bound
                 << ",\"relinearize\":" << relin_noise << ",\"relinearize_bound\":" << relin_bound
                 << ",\"rescale\":" << rescale_noise << ",\"rescale_bound\":" << rounding_bound + .5
@@ -242,6 +291,18 @@ void Benchmark(std::ostream& out, const ResearchScheme& scheme, const RunOptions
         [&](const Ciphertext& v) { verify_slots(decrypt(keys.secret_key, v), Shift(x, options.rotation_steps)); });
     Measure(results, "decrypt_decode_product", warmups, samples, [&] { return decrypt(keys.secret_key, product); },
         [&](const Slots& v) { verify_slots(v, Pointwise(x, y)); });
+    const auto depth_input = DepthInput(options, 1);
+    const auto depth_prepared = scheme.Rescale(scheme.Encrypt(keys.public_key,
+        scheme.Encode(depth_input, 0, std::min(1., options.message_bound), options.EncodingScale())));
+    auto depth_expected = depth_input;
+    for (unsigned layer = 0; layer < options.depth; ++layer)
+        depth_expected = Pointwise(depth_expected, depth_expected);
+    Measure(results, "depth_square_circuit", warmups, samples, [&] {
+        auto value = depth_prepared;
+        for (unsigned layer = 0; layer < options.depth; ++layer)
+            value = scheme.Rescale(scheme.Mult(value, value, relin));
+        return value;
+    }, [&](const Ciphertext& v) { verify_slots(decrypt(keys.secret_key, v), depth_expected); });
     std::cerr << "Timing: tensor -> relinearize -> rescale, same invocation\n";
     for (unsigned i = 0; i < warmups + samples; ++i) {
         const auto t0 = Clock::now();
@@ -295,7 +356,7 @@ int main(int argc, char** argv) {
         tolerance = std::ldexp(1.0, -int(target_bits));
         const ResearchScheme scheme(options.MakeProfile(), options.l, options.k);
         std::ostringstream report;
-        report << std::setprecision(17) << "{\"schema_version\":2,\"algorithm\":\"revised research construction\","
+        report << std::setprecision(17) << "{\"schema_version\":3,\"algorithm\":\"revised research construction\","
             << "\"security\":\"unproven\",\"bootstrap\":false,\"l\":" << scheme.l()
             << ",\"k\":" << scheme.k() << ",\"requested_parameters\":";
         WriteOptionsJson(report, options);

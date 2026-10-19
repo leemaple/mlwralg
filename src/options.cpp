@@ -144,7 +144,7 @@ void PrintOptionsHelp(std::ostream& out, bool experiment) {
         << "  --config FILE           UTF-8 key=value file; # starts a comment\n"
         << "  --l INT --k INT         Independent module dimensions, 1..8 (default 2,2)\n"
         << "  --n INT                 N=0 auto, or power of two 1024..131072; security check retained\n"
-        << "  --depth INT             Multiplicative depth 1..6 (default 3)\n"
+        << "  --depth INT             Multiplicative depth 1..10 (default 3)\n"
         << "  --slots INT             Power of two, <= N/2 (default 8)\n"
         << "  --scale-bits INT        Scaling modulus bits 41..59 (default 50)\n"
         << "  --first-mod-bits INT    scale_bits < value <= 60 (default 60)\n"
