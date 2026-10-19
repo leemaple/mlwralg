@@ -62,7 +62,7 @@ def make_report(output, summary):
         ms = r.get('timings', {}).get('depth_square_circuit', {}).get('mean_ms')
         body.append('<tr>' + ''.join(f'<td>{html.escape(str(x))}</td>' for x in
             [r['l'], r['k'], r['N'], r['depth'], ('精度未达到门槛，未计时' if r['status']=='experiment_failed' and parse_precision_failure(r['reason'],r['requested_parameters']) else status[r['status']]), r.get('minimum_recommended_N', '—'),
-             f'{error:.3e}' if error is not None else '未执行', f'{ms:.3f}' if ms is not None else '未执行']) +
+             f'{error:.3e}' if error is not None else ('未完整记录' if r['status'] in ('precision_failed','experiment_failed') else '未执行'), f'{ms:.3f}' if ms is not None else '未计时']) +
             f'<td><a href="cases/{r["case_id"]}/result.json">结果</a> · <a href="cases/{r["case_id"]}/requested.conf">配置</a></td></tr>')
     counts = summary['counts']
     legacy_precision=sum(r['status']=='experiment_failed' and parse_precision_failure(r['reason'],r['requested_parameters']) is not None for r in rows)
@@ -72,7 +72,7 @@ def make_report(output, summary):
     text = f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>MLWR 60 组参数测试</title>
 <style>body{{font:16px/1.65 system-ui,sans-serif;max-width:1450px;margin:32px auto;padding:0 20px;color:#171717}}table{{border-collapse:collapse;width:100%;font-size:14px}}th,td{{border:1px solid #ccc;padding:8px;text-align:left}}th{{background:#eee}}a{{color:#1449a0}}code{{background:#eee;padding:2px 5px}}.numbers{{font-size:22px;font-weight:600}}small{{color:#555}}</style>
 <h1>MLWR：60 组参数测试结果</h1><p class="numbers">已完成 {len(rows)}/{summary["expected_cases"]} 组；通过 {counts.get('passed',0)} 组；安全参数检查拒绝 {counts.get('security_rejected',0)} 组；精度未达标 {precision_count} 组；其他失败 {other_count} 组。</p>
-<p>固定 security_bits=128、l=2；k∈{{2,3}}，N∈{{4096,8192,16384}}，depth=1–10。其余配置保持默认：slots=8、scale_bits=50、first_mod_bits=60、单 digit HYBRID；每组 {summary['base_parameters']['key_trials']} 把独立新密钥、每把 3 类消息；每项预热 {summary['base_parameters']['warmups']} 次、正式采样 {summary['base_parameters']['samples']} 次；目标误差 ≤ 2⁻²⁰。</p>
+<p>固定 security_bits=128、l=2；k∈{{2,3}}，N∈{{4096,8192,16384}}，depth=1–10。其余配置保持默认：slots=8、scale_bits=50、first_mod_bits=60、单 digit HYBRID；通过组每组 {summary['base_parameters']['key_trials']} 把独立新密钥、每把 3 类消息；每项预热 {summary['base_parameters']['warmups']} 次、正式采样 {summary['base_parameters']['samples']} 次；目标误差 ≤ 2⁻²⁰。</p>
 <p>环境：{html.escape(machine['system'] + ' / ' + machine.get('cpu', machine['architecture']))}。不同机器的耗时分别报告，不混合计算。代码提交：<code>{summary['source_commit']}</code>。</p>
 <p>通过组完成加解密、一次乘法、张量积恒等式及系数误差检查，并实际执行 depth 层连续平方（每层：张量积→重线性化→重缩放），逐层解密与明文 x^(2^层数) 比较。深度电路使用幅度≤1 的实数、单位圆复数和随机消息。它验证这三类测试电路，不代表任意同深度电路。</p>
 <p>计时包含密钥生成、重线性化密钥、旋转密钥、编码、加密、解密、准备、加法、旋转、乘法三阶段及合计，以及完整深度电路。正确性检查先于计时；解密验证不计入乘法和深度电路时间。深度电路时间从准备后的密文开始，含每层乘法和重缩放，不含初始准备及密钥生成。</p>
