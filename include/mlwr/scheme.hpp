@@ -1,22 +1,19 @@
 #pragma once
 
 #include "mlwr/profile.hpp"
-#include <array>
 #include <complex>
 #include <vector>
 
 namespace mlwr {
-inline constexpr std::size_t k = 2;
-inline constexpr std::size_t ell = 2;
-using Row = std::array<RingPoly, k + 1>;
+using Row = std::vector<RingPoly>;
 using Slots = std::vector<std::complex<double>>;
 
 struct SecretKey {
-    std::array<RingPoly, k> s;
+    std::vector<RingPoly> s;
     uint64_t context = 0, tag = 0;
 };
 struct PublicKey {
-    std::array<Row, ell> rows;
+    std::vector<Row> rows;
     uint64_t context = 0, tag = 0;
 };
 struct KeyPair { PublicKey public_key; SecretKey secret_key; };
@@ -32,21 +29,21 @@ struct Ciphertext {
     uint32_t level = 0;
     uint64_t context = 0, key_tag = 0;
 };
-// Tensor stage output before relinearization: 3 linear and 4 quadratic terms.
+// Tensor stage output: k+1 linear and k*k quadratic terms.
 // Phase = linear[0] - sum(linear[j+1]*s[j]) + sum(quadratic[i*k+j]*s[i]*s[j]).
 struct TensorCiphertext {
     Row linear;
-    std::array<RingPoly, k * k> quadratic;
+    std::vector<RingPoly> quadratic;
     double scale = 0, bound = 0;
     uint32_t level = 0;
     uint64_t context = 0, key_tag = 0;
 };
 struct RelinearizationKey {
-    std::array<Row, k * k> rows;
+    std::vector<Row> rows;
     uint64_t context = 0, key_tag = 0;
 };
 struct SwitchingKey {
-    std::array<Row, k> rows;
+    std::vector<Row> rows;
     uint64_t context = 0, source_tag = 0, target_tag = 0;
 };
 struct RotationKey { SwitchingKey switching; uint32_t exponent = 0; };
@@ -56,7 +53,9 @@ struct RotationKey { SwitchingKey switching; uint32_t exponent = 0; };
 // The engine never calls OpenFHE's encryption, decryption, or evaluation APIs.
 class ResearchScheme {
   public:
-    explicit ResearchScheme(Profile profile = OpenFheProfile());
+    explicit ResearchScheme(Profile profile = OpenFheProfile(), uint32_t l = 2, uint32_t k = 2);
+    uint32_t l() const { return l_; }
+    uint32_t k() const { return k_; }
     const Profile& profile() const { return profile_; }
     const RnsParams& public_basis() const { return public_; }
     const RnsParams& source_basis() const { return source_; }
@@ -93,6 +92,7 @@ class ResearchScheme {
 
   private:
     Profile profile_;
+    uint32_t l_, k_;
     RnsParams extended_, public_, source_;
     uint64_t id_;
     void Validate(const SecretKey& key) const;
@@ -100,7 +100,7 @@ class ResearchScheme {
     void Validate(const Plaintext& value) const;
     void ValidateRows(const std::vector<Row>& rows) const;
     void Budget(uint32_t level, double scale, double bound) const;
-    Row MakeRow(const std::array<RingPoly, k>& source_secret,
+    Row MakeRow(const std::vector<RingPoly>& source_secret,
                 const RnsParams& target, const RingPoly* embedding = nullptr) const;
     Row SwitchProduct(const std::vector<RingPoly>& multipliers,
                       const std::vector<Row>& rows, uint32_t level) const;

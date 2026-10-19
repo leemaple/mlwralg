@@ -1,4 +1,5 @@
 #include "mlwr/scheme.hpp"
+#include "mlwr/options.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -17,8 +18,8 @@ using namespace mlwr;
 using Clock = std::chrono::steady_clock;
 // Declared before running: approximately the previous 1e-6 acceptance target,
 // now an exact binary precision target. This is NOT log2(encoding scale).
-constexpr unsigned target_bits = 20;
-constexpr double tolerance = 0x1p-20;
+unsigned target_bits = 20;
+double tolerance = 0x1p-20;
 volatile uint64_t observed = 0;
 void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -37,9 +38,9 @@ Slots Pointwise(const Slots& a, const Slots& b, bool add = false) {
     for (std::size_t i = 0; i < a.size(); ++i) out[i] = add ? a[i] + b[i] : a[i] * b[i];
     return out;
 }
-Slots Shift(const Slots& a) {
+Slots Shift(const Slots& a, int32_t steps) {
     Slots out(a.size());
-    for (std::size_t i = 0; i < a.size(); ++i) out[i] = a[(i + 1) % a.size()];
+    for (std::size_t i = 0; i < a.size(); ++i) out[i] = a[(int64_t(i) + steps % int64_t(a.size()) + int64_t(a.size())) % a.size()];
     return out;
 }
 double Error(const Slots& actual, const Slots& expected) {
@@ -62,7 +63,7 @@ void Values(std::ostream& out, const Slots& values) {
 void Metric(std::ostream& out, const char* name, const Slots& actual,
             const Slots& expected, double scale, uint32_t level) {
     const auto error = Error(actual, expected);
-    Require(error <= tolerance, "Decoded error exceeds the predeclared 20-bit target");
+    Require(error <= tolerance, "Decoded error exceeds the configured precision target");
     out << "{\"operation\":\"" << name << "\",\"level\":" << level
         << ",\"scale\":" << scale << ",\"log2_scale\":" << std::log2(scale)
         << ",\"inverse_scale\":" << 1 / scale << ",\"max_absolute_error\":" << error
@@ -91,33 +92,45 @@ void BasisJson(std::ostream& out, const RnsParams& basis) {
     out << "]}";
 }
 
-void Correctness(std::ostream& out, const ResearchScheme& scheme) {
+Slots Repeat(const Slots& pattern, uint32_t count) {
+    Slots result(count);
+    for (uint32_t i = 0; i < count; ++i) result[i] = pattern[i % pattern.size()];
+    return result;
+}
+
+void Correctness(std::ostream& out, const ResearchScheme& scheme, const RunOptions& options) {
+    const auto decrypt = [&](const SecretKey& key, const Ciphertext& c) {
+        return scheme.Decrypt(key, c, options.smudge_bound);
+    };
     const Slots reals{-1.25, -.125, 0, .125, .5, 1, 1.25, 2};
     const Slots factors{.5, -.25, 1.5, -1, .125, .75, -1.25, .5};
     const Slots complex{{.25,.125}, {-.5,.25}, {0,0}, {.125,-.0625},
                         {.5,-.5}, {1,.25}, {-.25,-.5}, {1.5,.125}};
     const Slots complex_factors{{-.5,.25}, {.25,-.5}, {1,.25}, {-.125,.5},
                                 {.5,.5}, {-.25,.125}, {.25,1}, {.5,-.25}};
-    std::mt19937 generator(20261013);  // Public messages only; never secret-key randomness.
+    std::mt19937 generator(options.message_seed);  // Public messages only; never secret-key randomness.
     std::uniform_int_distribution<int> draw(-1024, 1024);
     out << '[';
     bool first = true;
-    for (unsigned trial = 0; trial < 3; ++trial) {
-        std::cerr << "Correctness: fresh key trial " << trial + 1 << "/3\n";
+    for (unsigned trial = 0; trial < options.key_trials; ++trial) {
+        std::cerr << "Correctness: fresh key trial " << trial + 1 << "/" << options.key_trials << "\n";
         const auto keys = scheme.KeyGen();
         const auto relin = scheme.RelinGen(keys.secret_key);
         double rounding_bound = .5;
         for (const auto& s : keys.secret_key.s) rounding_bound += .5 * Norm(s, true);
-        const double fresh_bound = rounding_bound * (1 + 2.0 * scheme.profile().ciphertext->GetRingDimension() *
+        const double fresh_bound = rounding_bound * (1 + double(scheme.l()) * scheme.profile().ciphertext->GetRingDimension() *
             scheme.basis(0)->GetModulus().ConvertToDouble() / scheme.public_basis()->GetModulus().ConvertToDouble());
         for (unsigned example = 0; example < 3; ++example) {
-            Slots x = example == 0 ? reals : complex;
-            Slots y = example == 0 ? factors : complex_factors;
+            Slots x = Repeat(example == 0 ? reals : complex, scheme.profile().slots);
+            Slots y = Repeat(example == 0 ? factors : complex_factors, scheme.profile().slots);
             if (example == 2) for (unsigned i = 0; i < x.size(); ++i) {
                 x[i] = {draw(generator) / 1024., draw(generator) / 1024.};
                 y[i] = {draw(generator) / 1024., draw(generator) / 1024.};
             }
-            const auto px = scheme.Encode(x), py = scheme.Encode(y);
+            for (auto& value : x) value *= options.message_bound / 2;
+            for (auto& value : y) value *= options.message_bound / 2;
+            const auto px = scheme.Encode(x, 0, options.message_bound, options.EncodingScale());
+            const auto py = scheme.Encode(y, 0, options.message_bound, options.EncodingScale());
             const auto cx = scheme.Encrypt(keys.public_key, px), cy = scheme.Encrypt(keys.public_key, py);
             const double fresh_x_noise = Norm(scheme.Phase(keys.secret_key, cx) - px.polynomial);
             const double fresh_y_noise = Norm(scheme.Phase(keys.secret_key, cy) - py.polynomial);
@@ -127,16 +140,19 @@ void Correctness(std::ostream& out, const ResearchScheme& scheme) {
             const auto a = scheme.Rescale(cx), b = scheme.Rescale(cy);
             const auto tensor = scheme.Tensor(a, b);
             auto tensor_phase = tensor.linear[0];
-            const auto s0 = SelectBasis(keys.secret_key.s[0], scheme.basis(a.level));
-            const auto s1 = SelectBasis(keys.secret_key.s[1], scheme.basis(a.level));
-            tensor_phase -= tensor.linear[1] * s0 + tensor.linear[2] * s1;
-            tensor_phase += tensor.quadratic[0] * s0 * s0 + tensor.quadratic[1] * s0 * s1
-                          + tensor.quadratic[2] * s1 * s0 + tensor.quadratic[3] * s1 * s1;
+            std::vector<RingPoly> secrets;
+            for (const auto& secret : keys.secret_key.s)
+                secrets.push_back(SelectBasis(secret, scheme.basis(a.level)));
+            for (uint32_t i = 0; i < scheme.k(); ++i) {
+                tensor_phase -= tensor.linear[i + 1] * secrets[i];
+                for (uint32_t j = 0; j < scheme.k(); ++j)
+                    tensor_phase += tensor.quadratic[i * scheme.k() + j] * secrets[i] * secrets[j];
+            }
             const auto expected_phase = scheme.Phase(keys.secret_key, a) * scheme.Phase(keys.secret_key, b);
             Require(tensor_phase == expected_phase, "Tensor phase identity failed");
             const auto relinearized = scheme.Relinearize(tensor, relin);
             const double relin_noise = Norm(scheme.Phase(keys.secret_key, relinearized) - expected_phase);
-            const double relin_bound = rounding_bound * (1 + 4.0 * scheme.profile().ciphertext->GetRingDimension() *
+            const double relin_bound = rounding_bound * (1 + double(scheme.k() * scheme.k()) * scheme.profile().ciphertext->GetRingDimension() *
                 scheme.basis(a.level)->GetModulus().ConvertToDouble() /
                 (2 * scheme.profile().auxiliary->GetModulus().ConvertToDouble()));
             Require(relin_noise <= relin_bound, "Relinearization coefficient noise bound");
@@ -149,14 +165,14 @@ void Correctness(std::ostream& out, const ResearchScheme& scheme) {
             out << "{\"trial\":" << trial + 1 << ",\"case\":\""
                 << (example == 0 ? "real" : example == 1 ? "complex" : "dyadic_random") << "\",\"metrics\":[";
             Metric(out, "decode_encode_a", scheme.Decode(px), x, px.scale, px.level); out << ',';
-            Metric(out, "decrypt_fresh_a", scheme.Decrypt(keys.secret_key, cx), x, cx.scale, cx.level); out << ',';
-            Metric(out, "decrypt_fresh_b", scheme.Decrypt(keys.secret_key, cy), y, cy.scale, cy.level); out << ',';
-            Metric(out, "decrypt_prepared_a", scheme.Decrypt(keys.secret_key, a), x, a.scale, a.level); out << ',';
-            Metric(out, "decrypt_prepared_b", scheme.Decrypt(keys.secret_key, b), y, b.scale, b.level); out << ',';
+            Metric(out, "decrypt_fresh_a", decrypt(keys.secret_key, cx), x, cx.scale, cx.level); out << ',';
+            Metric(out, "decrypt_fresh_b", decrypt(keys.secret_key, cy), y, cy.scale, cy.level); out << ',';
+            Metric(out, "decrypt_prepared_a", decrypt(keys.secret_key, a), x, a.scale, a.level); out << ',';
+            Metric(out, "decrypt_prepared_b", decrypt(keys.secret_key, b), y, b.scale, b.level); out << ',';
             const auto expected = Pointwise(x, y);
-            Metric(out, "multiply_before_rescale", scheme.Decrypt(keys.secret_key, relinearized), expected,
+            Metric(out, "multiply_before_rescale", decrypt(keys.secret_key, relinearized), expected,
                    relinearized.scale, relinearized.level); out << ',';
-            Metric(out, "multiply_after_rescale", scheme.Decrypt(keys.secret_key, product), expected,
+            Metric(out, "multiply_after_rescale", decrypt(keys.secret_key, product), expected,
                    product.scale, product.level);
             out << "],\"coefficient_checks\":{\"tensor_identity\":true,\"fresh_a\":" << fresh_x_noise
                 << ",\"fresh_b\":" << fresh_y_noise << ",\"fresh_bound\":" << fresh_bound
@@ -184,41 +200,47 @@ void Measure(Measurements& results, const std::string& name, unsigned warmups, u
         if (i >= warmups) results[name].push_back(Milliseconds(start, end));
     }
 }
-void Benchmark(std::ostream& out, const ResearchScheme& scheme, unsigned samples, unsigned warmups) {
-    const Slots x{-.75, -.125, 0, .125, .5, 1, 1.25, 1.5};
-    const Slots y{.5, -.25, 1.5, -1, .125, .75, -1.25, .5};
+void Benchmark(std::ostream& out, const ResearchScheme& scheme, const RunOptions& options) {
+    const auto decrypt = [&](const SecretKey& key, const Ciphertext& c) {
+        return scheme.Decrypt(key, c, options.smudge_bound);
+    };
+    const auto samples = options.samples, warmups = options.warmups;
+    auto x = Repeat({-.75, -.125, 0, .125, .5, 1, 1.25, 1.5}, scheme.profile().slots);
+    auto y = Repeat({.5, -.25, 1.5, -1, .125, .75, -1.25, .5}, scheme.profile().slots);
+    for (auto& value : x) value *= options.message_bound / 2;
+    for (auto& value : y) value *= options.message_bound / 2;
     const auto keys = scheme.KeyGen();
     const auto relin = scheme.RelinGen(keys.secret_key);
-    const auto rotation = scheme.RotateKeyGen(keys.secret_key, 1);
-    const auto plaintext = scheme.Encode(x);
+    const auto rotation = scheme.RotateKeyGen(keys.secret_key, options.rotation_steps);
+    const auto plaintext = scheme.Encode(x, 0, options.message_bound, options.EncodingScale());
     const auto fresh = scheme.Encrypt(keys.public_key, plaintext);
     const auto a = scheme.Rescale(fresh);
-    const auto b = scheme.Rescale(scheme.Encrypt(keys.public_key, y));
+    const auto b = scheme.Rescale(scheme.Encrypt(keys.public_key, scheme.Encode(y, 0, options.message_bound, options.EncodingScale())));
     const auto product = scheme.Rescale(scheme.Mult(a, b, relin));
     Measurements results;
     auto verify_slots = [&](const Slots& actual, const Slots& expected) {
         Require(Error(actual, expected) <= tolerance, "Timing sample correctness failed");
     };
     Measure(results, "keygen", warmups, samples, [&] { return scheme.KeyGen(); }, [&](const KeyPair& v) {
-        verify_slots(scheme.Decrypt(v.secret_key, scheme.Encrypt(v.public_key, plaintext)), x);
+        verify_slots(decrypt(v.secret_key, scheme.Encrypt(v.public_key, plaintext)), x);
     });
     Measure(results, "relin_keygen", warmups, samples, [&] { return scheme.RelinGen(keys.secret_key); },
         [&](const RelinearizationKey& v) { observed += v.key_tag; });
-    Measure(results, "rotation_keygen", warmups, samples, [&] { return scheme.RotateKeyGen(keys.secret_key, 1); },
+    Measure(results, "rotation_keygen", warmups, samples, [&] { return scheme.RotateKeyGen(keys.secret_key, options.rotation_steps); },
         [&](const RotationKey& v) { observed += v.exponent; });
-    Measure(results, "encode", warmups, samples, [&] { return scheme.Encode(x); },
+    Measure(results, "encode", warmups, samples, [&] { return scheme.Encode(x, 0, options.message_bound, options.EncodingScale()); },
         [&](const Plaintext& v) { verify_slots(scheme.Decode(v), x); });
     Measure(results, "encrypt_preencoded", warmups, samples, [&] { return scheme.Encrypt(keys.public_key, plaintext); },
-        [&](const Ciphertext& v) { verify_slots(scheme.Decrypt(keys.secret_key, v), x); });
-    Measure(results, "decrypt_decode_fresh", warmups, samples, [&] { return scheme.Decrypt(keys.secret_key, fresh); },
+        [&](const Ciphertext& v) { verify_slots(decrypt(keys.secret_key, v), x); });
+    Measure(results, "decrypt_decode_fresh", warmups, samples, [&] { return decrypt(keys.secret_key, fresh); },
         [&](const Slots& v) { verify_slots(v, x); });
     Measure(results, "prepare_one_ciphertext", warmups, samples, [&] { return scheme.Rescale(fresh); },
-        [&](const Ciphertext& v) { verify_slots(scheme.Decrypt(keys.secret_key, v), x); });
+        [&](const Ciphertext& v) { verify_slots(decrypt(keys.secret_key, v), x); });
     Measure(results, "add", warmups, samples, [&] { return scheme.Add(a, b); },
-        [&](const Ciphertext& v) { verify_slots(scheme.Decrypt(keys.secret_key, v), Pointwise(x, y, true)); });
-    Measure(results, "rotate_left_one", warmups, samples, [&] { return scheme.Rotate(a, rotation); },
-        [&](const Ciphertext& v) { verify_slots(scheme.Decrypt(keys.secret_key, v), Shift(x)); });
-    Measure(results, "decrypt_decode_product", warmups, samples, [&] { return scheme.Decrypt(keys.secret_key, product); },
+        [&](const Ciphertext& v) { verify_slots(decrypt(keys.secret_key, v), Pointwise(x, y, true)); });
+    Measure(results, "rotate", warmups, samples, [&] { return scheme.Rotate(a, rotation); },
+        [&](const Ciphertext& v) { verify_slots(decrypt(keys.secret_key, v), Shift(x, options.rotation_steps)); });
+    Measure(results, "decrypt_decode_product", warmups, samples, [&] { return decrypt(keys.secret_key, product); },
         [&](const Slots& v) { verify_slots(v, Pointwise(x, y)); });
     std::cerr << "Timing: tensor -> relinearize -> rescale, same invocation\n";
     for (unsigned i = 0; i < warmups + samples; ++i) {
@@ -229,7 +251,7 @@ void Benchmark(std::ostream& out, const ResearchScheme& scheme, unsigned samples
         const auto t2 = Clock::now();
         const auto scaled = scheme.Rescale(relinearized);
         const auto t3 = Clock::now();
-        verify_slots(scheme.Decrypt(keys.secret_key, scaled), Pointwise(x, y));
+        verify_slots(decrypt(keys.secret_key, scaled), Pointwise(x, y));
         if (i >= warmups) {
             results["multiply_tensor"].push_back(Milliseconds(t0, t1));
             results["multiply_relinearize"].push_back(Milliseconds(t1, t2));
@@ -266,28 +288,35 @@ void Benchmark(std::ostream& out, const ResearchScheme& scheme, unsigned samples
 
 int main(int argc, char** argv) {
     try {
-        const unsigned samples = argc > 1 ? std::stoul(argv[1]) : 15;
-        const unsigned warmups = argc > 2 ? std::stoul(argv[2]) : 2;
-        Require(argc <= 3 && samples >= 3 && samples <= 1000 && warmups >= 1 && warmups <= 100,
-                "Usage: mlwr_experiment [samples 3..1000] [warmups 1..100]");
-        const ResearchScheme scheme;
+        const auto options = ParseOptions(argc, argv, true);
+        if (options.help) { PrintOptionsHelp(std::cout, true); return 0; }
+        const auto samples = options.samples, warmups = options.warmups;
+        target_bits = options.precision_bits;
+        tolerance = std::ldexp(1.0, -int(target_bits));
+        const ResearchScheme scheme(options.MakeProfile(), options.l, options.k);
         std::ostringstream report;
-        report << std::setprecision(17) << "{\"schema_version\":1,\"algorithm\":\"revised research construction\","
-            << "\"security\":\"unproven\",\"bootstrap\":false,\"l\":2,\"k\":2,\"profile\":";
+        report << std::setprecision(17) << "{\"schema_version\":2,\"algorithm\":\"revised research construction\","
+            << "\"security\":\"unproven\",\"bootstrap\":false,\"l\":" << scheme.l()
+            << ",\"k\":" << scheme.k() << ",\"requested_parameters\":";
+        WriteOptionsJson(report, options);
+        report << ",\"profile\":";
         WriteProfileJson(report, scheme.profile());
         report << ",\"moduli\":{\"P_main\":"; BasisJson(report, scheme.basis(0));
         report << ",\"Q_auxiliary\":"; BasisJson(report, scheme.profile().auxiliary);
         report << ",\"T_public\":"; BasisJson(report, scheme.public_basis());
         report << ",\"W_source\":"; BasisJson(report, scheme.source_basis());
-        report << "},\"protocol\":{\"precision_target_bits\":" << target_bits << ",\"absolute_tolerance\":"
-            << tolerance << ",\"target_origin\":\"existing approximately 20-bit test criterion, not a meeting-specified delta\","
-            << "\"fresh_key_trials\":3,\"cases_per_key\":3,\"samples_per_operation\":" << samples
+        report << '}';
+        if (options.print_parameters) { std::cout << report.str() << "}\n"; return 0; }
+        report << ",\"protocol\":{\"precision_target_bits\":" << target_bits << ",\"absolute_tolerance\":"
+            << tolerance << ",\"target_origin\":\"configured absolute-error target, not log2(scale)\","
+            << "\"fresh_key_trials\":" << options.key_trials << ",\"cases_per_key\":3,\"samples_per_operation\":" << samples
             << ",\"warmups_per_operation\":" << warmups << ",\"clock\":\"steady_clock\","
-            << "\"timing_unit\":\"milliseconds per call over 8 slots\",\"smudge_bound\":0},\"correctness\":";
-        Correctness(report, scheme);
+            << "\"timing_unit\":\"milliseconds per call over " << scheme.profile().slots << " slots\",\"smudge_bound\":" << options.smudge_bound
+            << ",\"rotation_steps\":" << options.rotation_steps << "},\"correctness\":";
+        Correctness(report, scheme, options);
         std::cerr << "Correctness gate passed; beginning timed operations\n";
         report << ",\"timings\":";
-        Benchmark(report, scheme, samples, warmups);
+        Benchmark(report, scheme, options);
         report << ",\"all_correctness_checks_passed\":true}\n";
         std::cout << report.str();
     } catch (const std::exception& error) {

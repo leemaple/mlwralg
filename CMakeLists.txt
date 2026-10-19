@@ -28,7 +28,7 @@ endif()
 add_executable(openfhe_reference apps/openfhe_reference.cpp)
 target_link_libraries(openfhe_reference PRIVATE mlwr)
 
-add_library(mlwr src/rns.cpp src/profile.cpp src/scheme.cpp)
+add_library(mlwr src/rns.cpp src/profile.cpp src/scheme.cpp src/options.cpp)
 target_include_directories(mlwr PUBLIC include)
 target_link_libraries(mlwr PUBLIC mlwr_openfhe)
 target_compile_options(mlwr PRIVATE -Wall -Wextra -Wpedantic)
@@ -56,3 +56,13 @@ add_test(NAME mlwr_correctness COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
     ${CMAKE_BINARY_DIR}/evidence/mlwr.json $<TARGET_FILE:mlwr_checks>)
 set_tests_properties(mlwr_correctness PROPERTIES TIMEOUT 600)
+add_executable(parameter_checks tests/parameter_checks.cpp)
+target_link_libraries(parameter_checks PRIVATE mlwr)
+add_test(NAME adjustable_parameters COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/parameters.json $<TARGET_FILE:parameter_checks>)
+add_test(NAME parameter_configuration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/parameter-cli.json ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_parameters.py $<TARGET_FILE:mlwr_demo>)
+set_tests_properties(adjustable_parameters parameter_configuration PROPERTIES TIMEOUT 600)

@@ -66,22 +66,33 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     parser.add_argument("executable", type=Path)
-    parser.add_argument("--samples", type=int, default=15)
-    parser.add_argument("--warmups", type=int, default=2)
+    parser.add_argument("--config", type=Path, help="UTF-8 key=value parameter file")
+    for option in ("l", "k", "n", "depth", "slots", "scale-bits", "first-mod-bits", "samples", "warmups",
+                   "security-bits", "precision-bits", "key-trials", "message-seed", "smudge-bound", "rotation-steps", "message-bound", "initial-scale-bits"):
+        parser.add_argument("--" + option, type=float if option == "message-bound" else int, default=None)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     executable = args.executable.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     for name in ("experiment.json", "native-output.json", "timings.csv", "timing-samples.csv",
-                 "correctness.csv", "slots.csv", "failure.json"):
+                 "correctness.csv", "slots.csv", "failure.json", "resolved.conf", "parameters.csv"):
         (output / name).unlink(missing_ok=True)
     identity = source_identity(root)
     metadata = {"started_utc": datetime.now(timezone.utc).isoformat(),
                 "source_commit": command("git", "-C", str(root), "rev-parse", "HEAD"),
                 "source_identity": identity, "environment": environment(executable)}
+    invocation = [str(executable)]
+    if args.config is not None:
+        invocation += ["--config", str(args.config.resolve())]
+    for option in ("l", "k", "n", "depth", "slots", "scale-bits", "first-mod-bits", "samples", "warmups",
+                   "security-bits", "precision-bits", "key-trials", "message-seed", "smudge-bound", "rotation-steps", "message-bound", "initial-scale-bits"):
+        value = getattr(args, option.replace("-", "_"))
+        if value is not None:
+            invocation += ["--" + option, str(value)]
+    metadata["invocation"] = invocation
     with (output / "native-output.json").open("w") as native, (output / "experiment.log").open("w") as log:
-        process = subprocess.Popen([str(executable), str(args.samples), str(args.warmups)],
+        process = subprocess.Popen(invocation,
                                    stdout=native, stderr=subprocess.PIPE, text=True)
         for line in process.stderr:
             log.write(line)
@@ -96,6 +107,14 @@ def main():
     report.update(metadata)
     report["completed_utc"] = datetime.now(timezone.utc).isoformat()
     (output / "experiment.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+    # Pin the actual N, including when the request was N=0. This snapshot can
+    # be fed back to --config to reproduce this workload on another machine.
+    resolved = dict(report["requested_parameters"])
+    resolved["N"] = report["profile"]["ring_dimension"]
+    (output / "resolved.conf").write_text("# Resolved experiment parameters\n" +
+        "".join(f"{key} = {value}\n" for key, value in resolved.items()))
+    write_csv(output / "parameters.csv", ["parameter", "requested", "resolved"],
+              [[key, report["requested_parameters"][key], value] for key, value in resolved.items()])
     write_csv(output / "timings.csv", ["operation", "samples", "mean_ms", "median_ms", "min_ms",
               "max_ms", "stddev_sample_ms", "p95_nearest_rank_ms"],
               [[name, len(item["samples_ms"])] + [item[key] for key in (

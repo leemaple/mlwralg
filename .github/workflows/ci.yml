@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      parameters:
+        description: 'Optional key=value config (one parameter per line); blank runs default checks only'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -42,6 +47,19 @@ jobs:
         run: |
           python3 scripts/run_experiment.py build/evidence/experiment build/mlwr_experiment --samples 15 --warmups 2
           python3 scripts/verify_experiment.py build/evidence/experiment/experiment.json
+      - name: Record an unequal-dimension experiment
+        run: |
+          python3 scripts/run_experiment.py build/evidence/experiment-l3-k2 build/mlwr_experiment \
+            --config configs/l3-k2-n32768.conf --key-trials 1
+          python3 scripts/verify_experiment.py build/evidence/experiment-l3-k2/experiment.json
+      - name: Run user parameters
+        if: github.event_name == 'workflow_dispatch' && inputs.parameters != ''
+        env:
+          MLWR_USER_PARAMETERS: ${{ inputs.parameters }}
+        run: |
+          printf '%s\n' "$MLWR_USER_PARAMETERS" > build/user.conf
+          python3 scripts/run_experiment.py build/evidence/experiment-custom build/mlwr_experiment --config build/user.conf
+          python3 scripts/verify_experiment.py build/evidence/experiment-custom/experiment.json
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4

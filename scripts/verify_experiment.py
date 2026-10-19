@@ -14,8 +14,23 @@ def verify(path):
     report = json.loads(Path(path).read_text())
     protocol = report["protocol"]
     assert report["all_correctness_checks_passed"] is True
-    assert report["profile"]["ring_dimension"] == 32768
-    assert report["profile"]["slots"] == 8
+    profile = report["profile"]
+    n, slots = profile["ring_dimension"], profile["slots"]
+    assert n >= 1024 and n <= 131072 and n & (n - 1) == 0
+    assert 1 <= slots <= n // 2 and slots & (slots - 1) == 0
+    assert 1 <= report["l"] <= 8 and 1 <= report["k"] <= 8
+    if "requested_parameters" in report:
+        requested = report["requested_parameters"]
+        assert requested["l"] == report["l"] and requested["k"] == report["k"]
+        assert requested["N"] == 0 or requested["N"] == n
+        assert requested["slots"] == slots and requested["depth"] == profile["depth"]
+        assert requested["samples"] == protocol["samples_per_operation"]
+        assert requested["warmups"] == protocol["warmups_per_operation"]
+        assert requested["precision_bits"] == protocol["precision_target_bits"]
+        assert requested["key_trials"] == protocol["fresh_key_trials"]
+        assert requested["smudge_bound"] == protocol["smudge_bound"]
+        assert requested["rotation_steps"] == protocol["rotation_steps"]
+        assert profile["rlwe_security_table"] == f'HEStd_{requested["security_bits"]}_classic'
     assert protocol["absolute_tolerance"] == 2 ** (-protocol["precision_target_bits"])
     assert len(report["correctness"]) == protocol["fresh_key_trials"] * protocol["cases_per_key"]
     for case in report["correctness"]:
@@ -39,7 +54,7 @@ def verify(path):
             if error:
                 assert close(metric["precision_bits"], -math.log2(error))
     expected_operations = {"keygen", "relin_keygen", "rotation_keygen", "encode", "encrypt_preencoded",
-        "decrypt_decode_fresh", "prepare_one_ciphertext", "add", "rotate_left_one", "decrypt_decode_product",
+        "decrypt_decode_fresh", "prepare_one_ciphertext", "add", "rotate" if report.get("schema_version", 1) >= 2 else "rotate_left_one", "decrypt_decode_product",
         "multiply_tensor", "multiply_relinearize", "multiply_rescale", "multiply_total"}
     assert set(report["timings"]) == expected_operations
     for item in report["timings"].values():
@@ -63,4 +78,5 @@ if __name__ == "__main__":
     if len(reports) > 1:
         assert all(r["source_identity"] == reports[0]["source_identity"] for r in reports[1:])
         assert all(r["profile"] == reports[0]["profile"] and r["moduli"] == reports[0]["moduli"] for r in reports[1:])
+        assert all((r["l"], r["k"]) == (reports[0]["l"], reports[0]["k"]) for r in reports[1:])
         print("Implementation identity and all reported parameters match across environments")

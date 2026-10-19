@@ -5,7 +5,7 @@
 
 ## 1. 记号和精确取整
 
-环为 `R_M = Z_M[X]/(X^N+1)`，模块维度 `l=k=2`，私钥为 `(1,-s0,-s1)`。
+环为 `R_M = Z_M[X]/(X^N+1)`，模块维度默认 `l=k=2`，现支持独立配置 `l、k`；私钥为 `(1,-s0,...,-s_(k-1))`。
 代码 `level=0` 表示顶层，level 增大表示丢弃末尾主模数塔。
 
 - P：顶层主模数，即 OpenFHE 的主链乘积。
@@ -57,7 +57,7 @@ NTT 加乘由 OpenFHE `DCRTPoly` 完成。跨基算子先回系数域、CRT 重�
 
 原式直接 round 逆嵌入，常数 0.125 编码为零，乘法后的尺度也未定义。
 `s^T s` 是标量，不能对应 k² 行；修订明确使用顺序
-`(s0*s0, s0*s1, s1*s0, s1*s1)`。换钥输入秘密有 k 个分量，
+`(s0*s0, s0*s1, s1*s0, s1*s1)`（k=2 时）；一般 k 按 `i*k+j` 排列。换钥输入秘密有 k 个分量，
 评估密钥目标环统一为 R_(PQ)。
 
 ## 3. 修订研究构造
@@ -72,10 +72,10 @@ NTT 加乘由 OpenFHE `DCRTPoly` 完成。跨基算子先回系数域、CRT 重�
 
 ### 密钥生成：替代原 (2-1)
 
-秘密 s 的两个分量独立采用 OpenFHE 均匀三元采样，每个多项式各塔表示同一组系数。
+秘密 s 的 k 个分量独立采用 OpenFHE 均匀三元采样，每个多项式各塔表示同一组系数。
 
 ```
-A* ← uniform R_W^(2×2)
+A* ← uniform R_W^(l×k)
 A = SR(W→T,A*)
 b = SR(W→T,A* s)
 pk = (b,A), sk = (1,-s)
@@ -87,7 +87,7 @@ pk = (b,A), sk = (1,-s)
 
 ```
 m = round(Delta * sigma^-1(z))
-r ← independent uniform ternary polynomials, length 2
+r ← independent uniform ternary polynomials, length l
 c0 = SR(T→P,b^T r) + m  mod P
 c1 = SR(T→P,A^T r)      mod P
 z_out = sigma(center_H(c0-c1^T s) + uniform_smudge) / Delta
@@ -107,12 +107,12 @@ z_out = sigma(center_H(c0-c1^T s) + uniform_smudge) / Delta
 对每个目标多项式 f，每行独立采样：
 
 ```
-a* ← uniform R_W^(1×2)
+a* ← uniform R_W^(1×k)
 ek_a = SR(W→PQ,a*)
 ek_b = SR(W→PQ,a* s_target) + Q*f  mod PQ
 ```
 
-重线性化的四个 f 是张量顺序；换钥的两个 f 是源秘密的两个分量；
+重线性化的 k² 个 f 按 `i*k+j` 顺序对应 `s_i*s_j`；换钥的 k 个 f 是源秘密的 k 个分量；
 旋转源秘密为 `kappa_(5^r)(s)`。所有行、所有密钥生成均使用独立源矩阵。
 
 ### 运算与重缩放
@@ -126,15 +126,15 @@ ek_b = SR(W→PQ,a* s_target) + Q*f  mod PQ
 | PlainMult | 各分量乘编码多项式；Delta 乘明文尺度 |
 | Mult | `(d0,d1)+K_(s tensor s)(d2)`；Delta 乘另一密文尺度 |
 | Rescale | 各分量一次整体除 `D=H/H'` 并最近舍入；Delta 除实际 D |
-| KeySwitch | `(c0,0,0)-K_s_source(c1)`；Delta 不变 |
-| Rotate | 三分量执行 X→X^(5^r)，再换回原秘密；正 r 左移、负 r 右移 |
+| KeySwitch | `(c0,0,...,0)-K_s_source(c1)`；Delta 不变 |
+| Rotate | k+1 个分量执行 X→X^(5^r)，再换回原秘密；正 r 左移、负 r 右移 |
 
 主模数链由不同素数相乘，替代原来的精确几何序列 p0*u^h。
 没有只修改尺度字段来冒充重缩放。
 
 ## 4. 正确性依据与边界
 
-令 `S1=||s0||1+||s1||1`，`K=(1+S1)/2`，三元随机量满足 `R1<=2N`。
+令 `S1=sum_j ||s_j||1`，`K=(1+S1)/2`，三元随机量满足 `R1<=l*N`。
 确定性系数界为：
 
 ```
@@ -145,7 +145,7 @@ switching_added_error <= K*(1+a*N*(H-1)/(2Q))
 rescale_phase_discrepancy <= K  (相对于舍入前的精确除法)
 ```
 
-重线性化 a=4，普通换钥 a=2。测试用实际秘密的 L1 范数检查公钥、四个评估行、
+重线性化 a=k²，普通换钥 a=k。测试用实际秘密的 L1 范数检查公钥、各个评估行、
 新鲜相位、乘法相位及重缩放相位，并以独立 Python 大整数核验底层算子。
 
 浮点结果对照宿主复数运算。`1e-6` 是测试电路的经验验收阈值，

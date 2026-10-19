@@ -56,7 +56,7 @@ double Norm(const RingPoly& poly, bool one = false) {
 }
 RingPoly RowPhase(const Row& row, const SecretKey& secret) {
     auto phase = row[0];
-    for (std::size_t i = 0; i < k; ++i) phase -= row[i + 1] * LiftCentered(secret.s[i], phase.GetParams());
+    for (std::size_t i = 0; i < secret.s.size(); ++i) phase -= row[i + 1] * LiftCentered(secret.s[i], phase.GetParams());
     return phase;
 }
 void KeyErrors(const ResearchScheme& scheme, const KeyPair& keys, const RelinearizationKey& relin) {
@@ -65,10 +65,10 @@ void KeyErrors(const ResearchScheme& scheme, const KeyPair& keys, const Relinear
     for (const auto& row : keys.public_key.rows)
         Require(Norm(RowPhase(row, keys.secret_key)) <= bs, "Public key rounding noise bound");
     const auto pq = JoinBases(scheme.profile().ciphertext, scheme.profile().auxiliary);
-    for (std::size_t i = 0; i < k; ++i) for (std::size_t j = 0; j < k; ++j) {
+    for (std::size_t i = 0; i < scheme.k(); ++i) for (std::size_t j = 0; j < scheme.k(); ++j) {
         const auto target = MultiplyInteger(LiftCentered(keys.secret_key.s[i], pq) *
             LiftCentered(keys.secret_key.s[j], pq), scheme.profile().auxiliary->GetModulus());
-        Require(Norm(RowPhase(relin.rows[i * k + j], keys.secret_key) - target) <= bs,
+        Require(Norm(RowPhase(relin.rows[i * scheme.k() + j], keys.secret_key) - target) <= bs,
                 "Tensor row or evaluation-key noise bound");
     }
 }
@@ -113,7 +113,7 @@ void Trial(const ResearchScheme& scheme, const Slots& values, const Slots& facto
     const auto raw_product = scheme.Mult(a, b, relin);
     const auto tensor = scheme.Tensor(a, b);
     const auto staged_product = scheme.Relinearize(tensor, relin);
-    for (std::size_t i = 0; i <= k; ++i)
+    for (std::size_t i = 0; i <= scheme.k(); ++i)
         Require(staged_product.c[i] == raw_product.c[i], "Staged and combined multiplication differ");
     auto bad_tensor = tensor;
     bad_tensor.key_tag = 0;

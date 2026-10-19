@@ -6,12 +6,34 @@
 #include <stdexcept>
 
 namespace mlwr {
-Profile OpenFheProfile(uint32_t depth, uint32_t slots) {
-    if (depth < 1 || depth > 6 || slots == 0 || (slots & (slots - 1)))
-        throw std::invalid_argument("Supported profile: depth 1..6, power-of-two slots");
+void ValidateProfileOptions(uint32_t depth, uint32_t slots, uint32_t ring_dimension,
+                            uint32_t scale_bits, uint32_t first_mod_bits, uint32_t security_bits) {
+    if (security_bits != 128 && security_bits != 192 && security_bits != 256)
+        throw std::invalid_argument("security_bits must be 128, 192 or 256 (OpenFHE RLWE table only)");
+    if (depth < 1 || depth > 6 || slots == 0 || (slots & (slots - 1)) || slots > 65536)
+        throw std::invalid_argument("Supported profile: depth 1..6, power-of-two slots in 1..65536");
+    if (ring_dimension && (ring_dimension < 1024 || ring_dimension > 131072 ||
+                          (ring_dimension & (ring_dimension - 1))))
+        throw std::invalid_argument("N must be 0 (automatic) or a power of two in 1024..131072");
+    if (ring_dimension && slots > ring_dimension / 2)
+        throw std::invalid_argument("slots must not exceed N/2");
+    // Keep headroom above the engine's 2^40 minimum scale, and one bit
+    // between the final scale and first modulus for this bounded workload.
+    if (scale_bits < 41 || scale_bits > 59 || first_mod_bits <= scale_bits || first_mod_bits > 60)
+        throw std::invalid_argument("scale_bits must be 41..59; scale_bits < first_mod_bits <= 60");
+}
+
+Profile OpenFheProfile(uint32_t depth, uint32_t slots, uint32_t ring_dimension,
+                       uint32_t scale_bits, uint32_t first_mod_bits, uint32_t security_bits) {
+    ValidateProfileOptions(depth, slots, ring_dimension, scale_bits, first_mod_bits, security_bits);
     lbcrypto::CCParams<lbcrypto::CryptoContextCKKSRNS> params;
     params.SetMultiplicativeDepth(depth);
     params.SetBatchSize(slots);
+    params.SetRingDim(ring_dimension);
+    params.SetScalingModSize(scale_bits);
+    params.SetFirstModSize(first_mod_bits);
+    params.SetSecurityLevel(security_bits == 128 ? lbcrypto::HEStd_128_classic :
+                            security_bits == 192 ? lbcrypto::HEStd_192_classic : lbcrypto::HEStd_256_classic);
     params.SetCKKSDataType(lbcrypto::COMPLEX);
     // The disclosure has a single (non-gadget) switching product. The default
     // multi-digit HYBRID auxiliary modulus is too small for that operation.

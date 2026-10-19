@@ -1,6 +1,6 @@
 # MLWR 浮点型同态算法实现
 
-基于交底书的 `l = k = 2` 模块结构，独立实现 RNS 近似同态运算，使用
+基于交底书的模块结构，默认 `l = k = 2`，支持运行时独立设置 `l、k`，独立实现 RNS 近似同态运算，使用
 OpenFHE 1.6.1 的多项式、NTT、随机采样和编码基础设施。包含可运行示例、
 整数参考测试、原式反例和 macOS / Linux 验证流程。
 
@@ -37,6 +37,26 @@ python3 scripts/compare_parameters.py build/evidence/openfhe-reference.json buil
 即可生成 JSON、误差 CSV 和时间 CSV；先通过正确性检查，再进行 2 次预热与 15 次正式测量。
 乘法接口已显式拆成 `Tensor`、`Relinearize`、`Rescale`，保留原 `Mult` 调用方式。
 
+## 自己修改参数
+
+配置入口：[configs/default.conf](configs/default.conf)；完整说明：[参数修改手册](docs/parameter-guide.md)。
+先更新并编译本版本一次，此后修改配置无需重新编译。`l、k` 可独立取 1..8，
+`N=0` 自动选择，也可显式给定满足 OpenFHE 参数表要求的 2 的幂。
+还支持槽数、深度、模数位数、初始编码尺度、验收精度、输入幅度、解密噪声、旋转和测量参数。
+
+```sh
+cp configs/default.conf configs/my.conf
+# 用文本编辑器修改 configs/my.conf，以下命令都在项目根目录执行。
+./build/mlwr_experiment --config configs/my.conf --print-parameters
+python3 scripts/run_experiment.py build/evidence/my-run build/mlwr_experiment --config configs/my.conf
+python3 scripts/verify_experiment.py build/evidence/my-run/experiment.json
+```
+
+命令行可临时覆盖文件，例如 `--l 3 --k 1 --n 32768 --slots 16`。
+输出的 `parameters.csv` 对照请求值与实际值，`resolved.conf` 可复用。
+GitHub Actions 的手动运行入口支持在 `parameters` 字段粘贴配置内容，在 Linux 上运行并下载结果。
+默认历史回归仍固定原参数；新增参数回归独立测试可变维度、环维度和配置错误。
+
 ## 与 OpenFHE 的参数关系
 
 固定版本为 [v1.6.1 / b59e1f2](https://github.com/openfheorg/openfhe-development/tree/b59e1f291965f14fbee5172cd83a20f5b856204f)，
@@ -45,7 +65,7 @@ python3 scripts/compare_parameters.py build/evidence/openfhe-reference.json buil
 
 | 配置 | 数值／来源 |
 |---|---|
-| 运算深度、槽数 | 3、8；另外测试满槽 |
+| 默认运算深度、槽数 | 3、8；另外测试满槽，可配置 |
 | HYBRID 大 digit 数 | 显式设为 1，适配原文无 gadget 的整体密钥转换 |
 | 编码数据类型 | 显式设为 COMPLEX，保留原文消息域的虚部 |
 | 其他共有设置 | OpenFHE 默认：首模数 60 位、缩放模数 50 位、FLEXIBLEAUTOEXT、UNIFORM_TERNARY、HEStd_128_classic |
