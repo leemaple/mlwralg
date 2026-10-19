@@ -36,6 +36,7 @@ jobs:
           cmake --build build --parallel 4
       - name: Test and record parameters
         run: |
+          python3 tests/test_precision_failure.py
           ctest --test-dir build --output-on-failure
           python3 scripts/compare_parameters.py build/evidence/openfhe-reference.json build/evidence/mlwr.json
           c++ --version > build/evidence/compiler.txt

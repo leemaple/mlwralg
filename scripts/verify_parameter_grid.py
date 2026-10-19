@@ -8,6 +8,7 @@ import re
 import sys
 
 from verify_experiment import verify
+from precision_failure import parse_precision_failure
 
 
 def check(path,allow_subset=False):
@@ -62,6 +63,22 @@ def check(path,allow_subset=False):
             assert r['depth_max_error'] == max(m['max_absolute_error'] for m in deep)
             assert r['strict_inverse_scale_passed'] == sum(m['passes_inverse_scale'] for m in metrics + deep)
             assert r['strict_inverse_scale_total'] == len(metrics) + len(deep)
+        elif r['status'] in ('precision_failed','experiment_failed'):
+            # The latter name is preserved for frozen runs recorded before the
+            # dedicated precision outcome existed. Neither is a passed result.
+            assert r['preflight_exit_code']==0 and r['experiment_exit_code']==1
+            preflight=json.loads((case/'preflight.json').read_text())
+            assert preflight['requested_parameters']==r['requested_parameters']
+            assert preflight['profile']['ring_dimension']==r['N'] and preflight['profile']['depth']==r['depth']
+            assert preflight['profile']['rlwe_security_table']=='HEStd_128_classic'
+            assert json.loads((case/'failure.json').read_text())['exit_code']==1
+            log=(case/'record.stderr.log').read_text()
+            precision=parse_precision_failure(log,r['requested_parameters'])
+            assert precision is not None,'Unexpected native failure is not a precision outcome'
+            assert parse_precision_failure(r['reason'],r['requested_parameters'])==precision
+            if 'precision_failure' in r:assert r['precision_failure']==precision
+            assert 'timings' not in r and 'depth_max_error' not in r
+            assert not (case/'experiment.json').exists()
         else:
             raise AssertionError(f'Unexpected failure in {r["case_id"]}: {r["status"]}: {r["reason"]}')
     with (folder / 'summary.csv').open(encoding='utf-8-sig') as stream:
@@ -70,7 +87,7 @@ def check(path,allow_subset=False):
     for csv_row, row in zip(csv_rows, rows):
         assert csv_row['status'] == row['status']
         assert tuple(int(csv_row[key]) for key in ('l', 'k', 'N', 'depth')) == tuple(row[key] for key in ('l', 'k', 'N', 'depth'))
-        if row['status'] == 'security_rejected':
+        if row['status'] != 'passed':
             assert csv_row['depth_max_error'] == '' and all(value == '' for key, value in csv_row.items() if key.endswith('_mean_ms'))
     print(f'Grid verified: {len(expected)} unique cases, {counts}; {folder}')
     return report

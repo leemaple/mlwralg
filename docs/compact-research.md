@@ -81,3 +81,9 @@ python3 scripts/verify_experiment.py build/evidence/my-compact/experiment.json
 - tests/compact_checks.cpp、tests/test_compact_cli.py：恒等式、边界、上下文和形状错误检查。
 - scripts/run_parameter_grid.py、merge_parameter_grid.py、verify_parameter_grid.py：分组执行、完整覆盖合并和原始证据复算。
 - .github/workflows/compact-grid.yml：网页重跑入口。
+
+## 如何呈现精度失败
+
+固定128表和20位门槛的 b49451b 完整矩阵中，N16384、k3、深度10在第二把密钥下出现1.717266541285277e-6误差，超过2^-20。该组合保留为精度未达标，不给计时，不重抽密钥改写结果；当前参数族不能支持其全部测试样本。此观察不证明所有同N的其他参数都不可能。
+
+全组合工具将明确的原生精度门槛错误单独分类为precision_failed；早期冻结数据中的experiment_failed原状态保持，并严格核对原生错误、配置目标、退出码及无成功JSON。其他结构、运行、校验异常仍使独立审计失败。完整矩阵产物表示全部组合已尝试并核对结果，不表示全部组合通过正确性。单组run_experiment.py在精度失败时继续返回非零退出码。

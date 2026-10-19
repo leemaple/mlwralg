@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import sys
 from run_parameter_grid import GRID,make_report
+from run_experiment import command,digest
 from verify_parameter_grid import check
 
 
@@ -38,6 +39,8 @@ def main():
     summary.update(results=results,selection={'k':None,'N':None,'depth':None},expected_cases=60,
         runner_environments=environments,counts=dict(Counter(r['status'] for r in results)),
         all_combinations_attempted=True,all_combinations_passed=all(r['status']=='passed' for r in results))
+    summary['assembly_tool_commit']=command('git','-C',str(Path(__file__).resolve().parents[1]),'rev-parse','HEAD')
+    summary['assembly_tools_sha256']={name:digest(Path(__file__).parent/name) for name in ('merge_parameter_grid.py','verify_parameter_grid.py','precision_failure.py')}
     summary['environment']=dict(summary['environment'],cpu=f'{len(sources)} isolated GitHub runners; exact CPU and binary identity are retained per case')
     (output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     make_report(output,summary);check(output)
