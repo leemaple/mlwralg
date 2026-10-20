@@ -127,6 +127,8 @@ python3 scripts/merge_bootstrap_shards.py build/merged-bootstrap \
 
 合并脚本须使用运行批次的同一提交，检查脚本本身的哈希也参与验收。先看 `qualification-admission.json` 的72次状态，再看每组 `matched-comparison.json` 中各runner的CPU、原生/P03中位时间与同机比值。各 `summary.json` 的 `runner_environments` 能定位每次运行的机器；`source_trial` 与 `source_case` 保留分片本来的编号。
 
+本轮发布还加了一道独立核验：`scripts/audit_bootstrap_shard.py` 核对 GitHub 原始附件ZIP摘要、全部解压文件、固定源身份及运行脚本，并重新计算每份输出的140位明文链。交付中的 `evidence/independent-shard-audits` 保存逐片核验结果。日常改参后也可以直接运行 `python3 scripts/verify_bootstrap.py 某次运行/output.json` 重算全槽误差；不要仅依据缓存的 `all_passed` 字段。
+
 配置文件的默认续算深度为20。若复现实验中的40次乘法，在 `run_bootstrap.py` 命令后加 `--circuit-depth 40`。该值超过预置24层初始模数链，依赖真实刷新；是否通过必须看本次输出。
 
 本轮还提供64个自举参数点的**预算预筛**：N8192/16384/32768/65536、槽数8/64、usable_levels4/8、大分组3/5、原生/P03。12点通过预算，52点被配置或安全表拒绝，详见交付包 `evidence/bootstrap-budget-screen/summary.csv`。这64点没有执行加密或自举；实际续算资格化使用单独的结果表，二者不能混计。
