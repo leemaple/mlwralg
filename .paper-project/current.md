@@ -45,7 +45,16 @@ Bootstrap qualification:
 - merge_bootstrap_shards.py is frozen at the run's checker hash; requires all12
  shards, exactk/slots,40 multiplications,8 refreshes,50*N/2 checked slots, source/
  binary/dependency identities. Speed uses median of3 within-runner ratios.
- New merge/scheduling tools are not covered by the earlier independent review.
+ The new merge/scheduling tools received separate Standards and Spec reviews.
+ Their two P2 concerns (summary timing binding and independent oracle/source
+ identity binding) are fixed in audit_bootstrap_shard.py. Both reviewers
+ rechecked the changes. The external gate binds the original ZIP to GitHub's
+ published SHA256, all extracted files to that ZIP, and reruns the full140-digit
+ oracle for every native output. The frozen merge checker itself is unchanged.
+- Collection and independent auditing are active. Three shards have passed the
+ external audit as of12:35CST; no full72-case success claim yet. Durable logs:
+ .local/bootstrap-20261020/collect-shards-verified-retry.log and
+ .local/bootstrap-20261020/audit-completed-shards.log.
 
 Limits: N8192 five-layer compact is not N8192 bootstrapping. P01/P05 are versions
 of the same LCR/AKS work. No LCR, AKS, OverModRaise, SSE, ring switching or full

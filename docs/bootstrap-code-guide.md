@@ -2,6 +2,8 @@
 
 比较起点是已交付的 `c6f7721`。本轮计算实现冻结在 `abae7bd`；`1121536` 修复测试对象生命周期，`ac25f4f` 修复批量自举脚本的参数透传。三者的计算源身份一致，后续交付文档有独立提交。先看结果总览，再用下表定位，无需从头读全部源码。
 
+不方便运行代码时，可直接打开 [本轮代码分支](https://github.com/leemaple/mlwralg/tree/codex/bootstrap-four-papers) 查看当前文件，或打开 [PR 1 的改动对照](https://github.com/leemaple/mlwralg/pull/1/files) 看相对上一版具体改了什么。新版尚未合并到默认 `main`，查看仓库首页时应切换到 `codex/bootstrap-four-papers`。交付包的 `源码导读.html` 可以离线展开带行号的同一份代码，`source/` 保存原文件。
+
 |改动|代码入口|直接能检查到的事实|
 |---|---|---|
 |同样k减少重线性化工作|`src/compact.cpp`：`RelinGen`、`RawRelin`|先合并非对角线 aᵢⱼ+aⱼᵢ，再做平衡分解；k=2为4→3个秘密乘积，k=3为9→6个|
