@@ -59,13 +59,27 @@ Limits: only P03's small repeated-slot transform is ported. P01/P05 are versions
 of one LCR/AKS work. No LCR, AKS, OverModRaise, SSE, ring switching or full MLWR
 security proof is claimed. Smaller-N bootstrapping remains unresolved.
 
-Delivery assembly is active; HTML/PDF rendering, link/manifest/ZIP verification
-and SJZ import are still required. Target folder:
+Delivery assembly and verification are complete. Six PDF pages were visually
+reviewed; 547 local HTML links/anchors pass. All3512 manifest entries pass, and
+all5 ZIPs were independently read through CRC/SHA checks with exact3513-member
+coverage including the manifest. Target folder:
 交付/MLWR_小参数与自举_ac25f4f_20261020.
-Large raw JSON will use4lossless data ZIPs plus the main report/source ZIP.
-Keep all original shard metadata and a mapping/helper to reconstruct original
-folders without duplicating large outputs. Direct unredacted import is authorized
-to徐温菊17808,所网. A fresh SJZ space and current OTP may be needed; do not reuse
-closed old browser spaces. Previous deliveryW[2026]109522 is already sent.
+The4lossless data ZIPs plus the main report/source ZIP total1,825,353,512 bytes.
+Original shard metadata and a mapping/helper reconstruct all564 original members
+without duplicating large outputs. Source snapshot is09d0257; do not mutate the
+frozen package. The explicitly authorized unredacted import is complete.
+Combined210-character title failed to save; five separate forms each use their
+one complete attachment filename and an empty body. All5 outbox entries were
+confirmed as awaiting the exchange administrator; final-recipient receipt is not
+yet confirmed. All server filenames and exact byte counts match the originals.
+The main ZIP additionally passed roundtrip download SHA256 verification; the4
+raw-data ZIPs were not downloaded back. This distinction is recorded in the
+local receipt, alongside recipient identity, application numbers, and filenames:
+交付/MLWR_小参数与自举_ac25f4f_20261020_导入回执.html (and JSON).
+The dedicated browser space was finished once and confirmed fully closed,
+with no unmanaged user pages affected. Detailed recovery state is local only:
+.local/bootstrap-20261020/sjz-latest-state.json. Do not reopen that closed space
+or resend any of the5 confirmed forms. Implementation, qualification, artifact
+verification, and this delivery are complete; the research limits above remain.
 Draft PR1 is created and attached; do not merge without authorization:
 https://github.com/leemaple/mlwralg/pull/1.
