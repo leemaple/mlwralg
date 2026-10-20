@@ -4,7 +4,7 @@
 
 |改动|代码入口|直接能检查到的事实|
 |---|---|---|
-|同样k减少重线性化工作|`src/compact.cpp`：`RelinGen`、`RawRelinearize`|先合并非对角线 aᵢⱼ+aⱼᵢ，再做平衡分解；k=2为4→3个秘密乘积，k=3为9→6个|
+|同样k减少重线性化工作|`src/compact.cpp`：`RelinGen`、`RawRelin`|先合并非对角线 aᵢⱼ+aⱼᵢ，再做平衡分解；k=2为4→3个秘密乘积，k=3为9→6个|
 |把N8192的模数预算利用得更充分|`src/profile.cpp`：`CompactProfile`、`PackedLargerBasis`|允许27.83等素数对数目标；输出实际素数和根；独立公钥T按整数目标装入较少塔，仍检查T及QP|
 |真正的公开桥接自举|`include/mlwr/bootstrap.hpp`、`src/bootstrap.cpp`|`KeyGen`离线生成公开换钥；`Fold`用−s₀统一相位；`Refresh`调用真正EvalBootstrap；`Import`返回合法模块行|
 |消除重复槽外噪声并能继续计算|`BootstrapBridge::ProjectRepeated`|实际旋转求和，再实际乘整数A及丢一个素数重缩放；没有仅改层号或scale来伪装正确|
