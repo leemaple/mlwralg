@@ -1,6 +1,9 @@
 name: Sharded matched 40-layer bootstrap qualification
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/bootstrap-four-papers]
+    paths: ['.github/workflows/bootstrap-sharded.yml']
 permissions:
   contents: read
 jobs:
