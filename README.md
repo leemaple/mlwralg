@@ -12,7 +12,17 @@ OpenFHE 1.6.1 的多项式、NTT、随机采样和编码基础设施。包含可
 
 已实现 Setup、KeyGen、RelinGen、Encode/Decode、Encrypt/Decrypt、Add、
 PlainMult、Mult、Rescale、KSGen/KeySwitch、RotateKeyGen/Rotate。
-原文没有定义 Bootstrap，本项目实现有限深度运算，不声称具有自举能力。
+原文没有定义 Bootstrap。原有限深度接口保留；新分支增加独立、显式选择的
+同环公开桥接自举和 P03 稀疏变换路径，使用 OpenFHE 自举内核。
+这不是原交底书自带的自举证明，也没有把 N65536 的刷新写成 N8192 自举。
+
+10月20日本轮扩展的入口是 [小参数与自举参数手册](docs/bootstrap-parameter-guide.md)
+和 [这次改了什么／源码导读](docs/bootstrap-code-guide.md)。其中已测 N8192 五层配置位于
+`configs/compact/n8192-depth5.conf`，自举配置位于 `configs/bootstrap/`。
+[小参数实测结果](docs/compact-results-20261020.md)列出同机时间、实际误差、模数和密钥规模。
+[40次乘法自举实测](docs/bootstrap-results-20261020.md)给出72次全槽验收及原生/P03同机对照：
+64槽下P03总耗时中位降低8.2%（k=2）、7.4%（k=3）；8槽优先保留更快的原生路径。
+测量状态以各批次原始汇总为准；已有交付数据保持冻结。
 
 ## 构建和运行
 

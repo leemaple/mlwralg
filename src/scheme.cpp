@@ -1,4 +1,5 @@
 #include "mlwr/scheme.hpp"
+#include "mlwr/gadget.hpp"
 #include "math/dftransform.h"
 
 #include <atomic>
@@ -29,6 +30,11 @@ ResearchScheme::ResearchScheme(Profile profile, uint32_t l, uint32_t k)
     if (profile_.compact) throw std::invalid_argument("Use CompactScheme for a compact profile");
     if (l_ < 1 || l_ > 8 || k_ < 1 || k_ > 8)
         throw std::invalid_argument("Supported module dimensions: l and k independently in 1..8");
+    if (profile_.standard_gadget_bits) {
+        if(profile_.standard_gadget_bits<4 || profile_.standard_gadget_bits>30)
+            throw std::invalid_argument("Standard gadget bits must be zero or 4..30");
+        key_digits_=(profile_.ciphertext->GetModulus().GetMSB()+profile_.standard_gadget_bits-1)/profile_.standard_gadget_bits+1;
+    }
     extended_ = JoinBases(profile_.ciphertext, profile_.auxiliary);
     public_ = IndependentLargerBasis(profile_.ciphertext, profile_.auxiliary);
     source_ = IndependentLargerBasis(extended_, public_);
@@ -105,7 +111,7 @@ KeyPair ResearchScheme::KeyGen() const {
 RelinearizationKey ResearchScheme::RelinGen(const SecretKey& key) const {
     Validate(key);
     RelinearizationKey result;
-    result.rows.resize(k_ * k_);
+    result.rows.resize(k_ * k_ * key_digits_);
     result.context = id_;
     result.key_tag = key.tag;
     std::vector<RingPoly> source_secret(k_), extended_secret(k_);
@@ -114,9 +120,13 @@ RelinearizationKey ResearchScheme::RelinGen(const SecretKey& key) const {
         extended_secret[j] = LiftCentered(key.s[j], extended_);
     }
     for (std::size_t i = 0; i < k_; ++i) for (std::size_t j = 0; j < k_; ++j) {
-        const auto embedding = MultiplyInteger(extended_secret[i] * extended_secret[j],
-                                               profile_.auxiliary->GetModulus());
-        result.rows[i * k_ + j] = MakeRow(source_secret, extended_, &embedding);
+        auto power=Integer(1);
+        for(uint32_t d=0;d<key_digits_;++d) {
+            const auto embedding = MultiplyInteger(extended_secret[i] * extended_secret[j],
+                                                   power*profile_.auxiliary->GetModulus());
+            result.rows[(i*k_+j)*key_digits_+d] = MakeRow(source_secret, extended_, &embedding);
+            if(profile_.standard_gadget_bits)power<<=profile_.standard_gadget_bits;
+        }
     }
     return result;
 }
@@ -125,16 +135,22 @@ SwitchingKey ResearchScheme::KSGen(const SecretKey& target, const SecretKey& sou
     Validate(target);
     Validate(source);
     SwitchingKey result;
-    result.rows.resize(k_);
+    result.rows.resize(k_ * key_digits_);
     result.context = id_;
     result.source_tag = source.tag;
     result.target_tag = target.tag;
+    result.digit_bits=profile_.standard_gadget_bits;
+    result.digit_count=key_digits_;
     std::vector<RingPoly> target_source(k_);
     for (std::size_t j = 0; j < k_; ++j) target_source[j] = LiftCentered(target.s[j], source_);
     for (std::size_t i = 0; i < k_; ++i) {
-        const auto embedding = MultiplyInteger(LiftCentered(source.s[i], extended_),
-                                               profile_.auxiliary->GetModulus());
-        result.rows[i] = MakeRow(target_source, extended_, &embedding);
+        auto power=Integer(1);
+        for(uint32_t d=0;d<key_digits_;++d) {
+            const auto embedding = MultiplyInteger(LiftCentered(source.s[i], extended_),
+                                                   power*profile_.auxiliary->GetModulus());
+            result.rows[i*key_digits_+d] = MakeRow(target_source, extended_, &embedding);
+            if(profile_.standard_gadget_bits)power<<=profile_.standard_gadget_bits;
+        }
     }
     return result;
 }
@@ -169,6 +185,11 @@ Plaintext ResearchScheme::Encode(const Slots& values, uint32_t level,
 }
 
 Slots ResearchScheme::Decode(const Plaintext& plaintext) const {
+    auto values=DecodeAll(plaintext);
+    values.resize(profile_.slots);
+    return values;
+}
+Slots ResearchScheme::DecodeAll(const Plaintext& plaintext) const {
     Validate(plaintext);
     const auto coefficients = Coefficients(plaintext.polynomial);
     const auto& modulus = plaintext.polynomial.GetParams()->GetModulus();
@@ -183,7 +204,6 @@ Slots ResearchScheme::Decode(const Plaintext& plaintext) const {
     Slots values(nh);
     for (std::size_t i = 0; i < nh; ++i) values[i] = {centered(i), centered(i + nh)};
     lbcrypto::DiscreteFourierTransform::FFTSpecial(values, profile_.ciphertext->GetCyclotomicOrder());
-    values.resize(profile_.slots);
     for (auto z : values)
         if (!std::isfinite(z.real()) || !std::isfinite(z.imag())) throw std::runtime_error("Non-finite decode");
     return values;
@@ -265,7 +285,10 @@ Ciphertext ResearchScheme::PlainMult(const Ciphertext& a, const Plaintext& b) co
 
 Row ResearchScheme::SwitchProduct(const std::vector<RingPoly>& multipliers,
                                    const std::vector<Row>& rows, uint32_t level) const {
-    if (multipliers.size() != rows.size()) throw std::invalid_argument("Switching row count mismatch");
+    if (multipliers.size()*key_digits_ != rows.size()) throw std::invalid_argument("Switching row count mismatch");
+    if(profile_.standard_gadget_bits)
+        return GadgetSwitch(multipliers,rows,basis(level),extended_,profile_.auxiliary,k_+1,
+                            profile_.standard_gadget_bits,key_digits_);
     ValidateRows(rows);
     const auto p = basis(level);
     const auto pq = JoinBases(p, profile_.auxiliary);
@@ -302,7 +325,7 @@ Ciphertext ResearchScheme::Relinearize(const TensorCiphertext& tensor,
     if (tensor.context != id_ || !tensor.key_tag || key.context != id_ || key.key_tag != tensor.key_tag)
         throw std::invalid_argument("Relinearization requires a matching tensor and key");
     if (tensor.linear.size() != k_ + 1 || tensor.quadratic.size() != k_ * k_ ||
-        key.rows.size() != k_ * k_)
+        key.rows.size() != k_ * k_ * key_digits_)
         throw std::invalid_argument("Wrong tensor or relinearization-key dimension");
     Budget(tensor.level, tensor.scale, tensor.bound);
     const auto p = basis(tensor.level);
@@ -337,7 +360,9 @@ Ciphertext ResearchScheme::KeySwitch(const Ciphertext& value, const SwitchingKey
     Validate(value);
     if (key.context != id_ || key.source_tag != value.key_tag || !key.target_tag)
         throw std::invalid_argument("Wrong switching key");
-    if (key.rows.size() != k_) throw std::invalid_argument("Wrong switching-key row count");
+    if (key.rows.size() != k_*key_digits_ || key.digit_bits!=profile_.standard_gadget_bits ||
+        (key.digit_count!=key_digits_ && profile_.standard_gadget_bits))
+        throw std::invalid_argument("Wrong switching-key row count or gadget metadata");
     auto switched = SwitchProduct({value.c.begin() + 1, value.c.end()}, key.rows, value.level);
     auto out = value;
     out.key_tag = key.target_tag;

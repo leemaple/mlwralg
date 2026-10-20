@@ -32,7 +32,10 @@ def check(path,allow_subset=False):
         assert json.loads((case / 'result.json').read_text()) == r
         assert r['security_bits'] == r['requested_parameters']['security_bits'] == 128
         family=report.get('per_ring_parameters',{}).get(str(r['N']),report['base_parameters'])
-        assert r['requested_parameters'] == dict(family, l=r['l'], k=r['k'], N=r['N'], depth=r['depth'])
+        expected_config=dict(family,l=r['l'],k=r['k'],N=r['N'],depth=r['depth'])
+        if report.get('optimized') and r['N']==8192 and r['depth']>=5:
+            expected_config.update(report['depth_overrides']['8192:5+'])
+        assert r['requested_parameters']==expected_config
         text = ''.join(f'{key} = {value}\n' for key, value in r['requested_parameters'].items())
         assert (case / 'requested.conf').read_text() == text
         for name, digest in r['evidence_sha256'].items():

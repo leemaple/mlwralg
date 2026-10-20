@@ -1,0 +1,65 @@
+name: Sharded matched 40-layer bootstrap qualification
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/bootstrap-four-papers]
+    paths: ['.github/workflows/bootstrap-sharded.yml']
+permissions:
+  contents: read
+jobs:
+  matched-shard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        k: [2, 3]
+        slots: [8, 64]
+        trial: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+      - uses: actions/cache@v4
+        id: port-cache
+        with:
+          path: |
+            .deps/p03-*-install
+            .deps/p03-openfhe-dir.txt
+          key: p03-openfhe-b59e1f2-ubuntu24-${{ hashFiles('patches/openfhe-p03-small.inc','scripts/patch_openfhe_sparse.py','scripts/build_openfhe_p03.sh') }}
+      - if: steps.port-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_openfhe_p03.sh
+      - name: Preserve the pinned dependency cache before long experiments
+        if: steps.port-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .deps/p03-*-install
+            .deps/p03-openfhe-dir.txt
+          key: p03-openfhe-b59e1f2-ubuntu24-${{ hashFiles('patches/openfhe-p03-small.inc','scripts/patch_openfhe_sparse.py','scripts/build_openfhe_p03.sh') }}
+      - name: Build and regression gate
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMLWR_P03_PATCH=ON \
+            -DOpenFHE_DIR="$(cat .deps/p03-openfhe-dir.txt)"
+          cmake --build build --parallel 4
+          ctest --test-dir build --output-on-failure
+      - name: Matched native and P03 samples on the same runner
+        run: |
+          status=0
+          python3 scripts/run_bootstrap.py build/evidence/bootstrap-native build/mlwr_bootstrap \
+            --config configs/bootstrap/native-n65536.conf --key-trials 1 --timeout 900 --experiment-class diagnostic \
+            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 0 --circuit-depth 40 || status=1
+          python3 scripts/run_bootstrap.py build/evidence/bootstrap-p03 build/mlwr_bootstrap \
+            --config configs/bootstrap/native-n65536.conf --key-trials 1 --timeout 900 --experiment-class diagnostic \
+            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 1 --circuit-depth 40 || status=1
+          python3 scripts/merge_bootstrap_shards.py --check-shard build/evidence \
+            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --trial ${{ matrix.trial }} || status=1
+          exit "$status"
+      - name: Preserve every outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-shard-k${{ matrix.k }}-s${{ matrix.slots }}-t${{ matrix.trial }}
+          path: |
+            build/evidence/
+            build/Testing/Temporary/LastTest.log

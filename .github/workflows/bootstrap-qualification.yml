@@ -1,0 +1,100 @@
+name: Bootstrap and compact matched qualification
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Run the whole suite or only one independent experiment family'
+        type: choice
+        options: [all, bootstrap, compact]
+        default: all
+      circuit_depth:
+        description: 'Actual encrypted-factor multiplications, 1..100'
+        type: choice
+        options: ['40', '20', '60', '80']
+        default: '40'
+  push:
+    branches: [codex/bootstrap-four-papers]
+    paths: ['src/**','include/**','apps/**','patches/**','configs/**','scripts/**','tests/**','CMakeLists.txt','.github/workflows/bootstrap-qualification.yml']
+permissions:
+  contents: read
+jobs:
+  bootstrap:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'compact' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        k: [2, 3]
+        slots: [8, 64]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+      - uses: actions/cache@v4
+        id: port-cache
+        with:
+          path: |
+            .deps/p03-*-install
+            .deps/p03-openfhe-dir.txt
+          key: p03-openfhe-b59e1f2-ubuntu24-${{ hashFiles('patches/openfhe-p03-small.inc','scripts/patch_openfhe_sparse.py','scripts/build_openfhe_p03.sh') }}
+      - if: steps.port-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_openfhe_p03.sh
+      - name: Build the same pinned binary for both transforms
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMLWR_P03_PATCH=ON \
+            -DOpenFHE_DIR="$(cat .deps/p03-openfhe-dir.txt)"
+          cmake --build build --parallel 4
+      - name: Regression gate
+        run: ctest --test-dir build --output-on-failure
+      - name: Native then P03 on the same runner
+        run: |
+          python3 scripts/run_bootstrap.py build/evidence/bootstrap-native build/mlwr_bootstrap \
+            --config configs/bootstrap/native-n65536.conf --key-trials 3 --timeout 900 --experiment-class qualification \
+            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 0 --circuit-depth ${{ inputs.circuit_depth || '40' }}
+          python3 scripts/run_bootstrap.py build/evidence/bootstrap-p03 build/mlwr_bootstrap \
+            --config configs/bootstrap/native-n65536.conf --key-trials 3 --timeout 900 --experiment-class qualification \
+            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 1 --circuit-depth ${{ inputs.circuit_depth || '40' }}
+      - name: Preserve all outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-k${{ matrix.k }}-slots${{ matrix.slots }}
+          path: |
+            build/evidence/
+            build/Testing/Temporary/LastTest.log
+            .deps/p03-*-install/mlwr-port-manifest.json
+  compact-comparison:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'bootstrap' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        k: [2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: .deps/openfhe-install
+          key: openfhe-b59e1f2-ubuntu24-gcc13-native64-static-noomp-v1
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_openfhe.sh
+      - run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOpenFHE_DIR="$PWD/.deps/openfhe-install/lib/OpenFHE"
+          cmake --build build --parallel 4
+          ctest --test-dir build --output-on-failure
+      - name: Same-machine comparisons with all stage samples
+        run: |
+          python3 scripts/run_experiment.py build/evidence/baseline-d4 build/mlwr_experiment --config configs/compact/n8192.conf --depth 4 --k ${{ matrix.k }} --key-trials 3 --samples 15 --warmups 2
+          python3 scripts/run_experiment.py build/evidence/optimized-d4 build/mlwr_experiment --config configs/compact/n8192.conf --depth 4 --k ${{ matrix.k }} --key-trials 3 --samples 15 --warmups 2 --symmetric-relinearization 1 --packed-public-key 1
+          python3 scripts/run_experiment.py build/evidence/baseline-n16384-d5 build/mlwr_experiment --config configs/compact/n16384.conf --depth 5 --k ${{ matrix.k }} --key-trials 3 --samples 15 --warmups 2
+          python3 scripts/run_experiment.py build/evidence/optimized-n8192-d5 build/mlwr_experiment --config configs/compact/n8192-depth5.conf --k ${{ matrix.k }} --key-trials 3 --samples 15 --warmups 2
+          for result in build/evidence/*/experiment.json; do python3 scripts/verify_experiment.py "$result"; done
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compact-comparison-k${{ matrix.k }}
+          path: build/evidence/

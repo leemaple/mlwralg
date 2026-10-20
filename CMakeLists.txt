@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(mlwralg VERSION 0.1.0 LANGUAGES CXX)
+option(MLWR_P03_PATCH "Link the separately built pinned P03 OpenFHE transform port" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,17 +29,52 @@ endif()
 add_executable(openfhe_reference apps/openfhe_reference.cpp)
 target_link_libraries(openfhe_reference PRIVATE mlwr)
 
-add_library(mlwr src/rns.cpp src/profile.cpp src/scheme.cpp src/options.cpp src/compact.cpp)
+add_library(mlwr src/rns.cpp src/profile.cpp src/scheme.cpp src/options.cpp src/compact.cpp src/bootstrap.cpp src/gadget.cpp)
 target_include_directories(mlwr PUBLIC include)
 target_link_libraries(mlwr PUBLIC mlwr_openfhe)
 target_compile_options(mlwr PRIVATE -Wall -Wextra -Wpedantic)
+if(MLWR_P03_PATCH)
+    get_filename_component(MLWR_PORT_INSTALL "${OpenFHE_DIR}/../.." ABSOLUTE)
+    file(READ "${MLWR_PORT_INSTALL}/mlwr-port-manifest.json" MLWR_PORT_MANIFEST)
+    string(JSON MLWR_PORT_HELPER GET "${MLWR_PORT_MANIFEST}" helper_sha256)
+    string(JSON MLWR_PORT_PATCHER GET "${MLWR_PORT_MANIFEST}" patcher_sha256)
+    string(JSON MLWR_PORT_FHE GET "${MLWR_PORT_MANIFEST}" patched_fhe_sha256)
+    string(JSON MLWR_PORT_LIB GET "${MLWR_PORT_MANIFEST}" pke_library_sha256)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/patches/openfhe-p03-small.inc" MLWR_LOCAL_HELPER)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/patch_openfhe_sparse.py" MLWR_LOCAL_PATCHER)
+    file(SHA256 "${MLWR_PORT_INSTALL}/lib/libOPENFHEpke_static.a" MLWR_LOCAL_LIB)
+    if(NOT MLWR_LOCAL_HELPER STREQUAL MLWR_PORT_HELPER OR
+       NOT MLWR_LOCAL_PATCHER STREQUAL MLWR_PORT_PATCHER OR NOT MLWR_LOCAL_LIB STREQUAL MLWR_PORT_LIB)
+        message(FATAL_ERROR "P03 source/library does not match the installed manifest; rebuild scripts/build_openfhe_p03.sh")
+    endif()
+    target_compile_definitions(mlwr PRIVATE MLWR_P03_PATCH=1
+        MLWR_PORT_HELPER_SHA="${MLWR_PORT_HELPER}" MLWR_PORT_FHE_SHA="${MLWR_PORT_FHE}")
+endif()
 add_executable(mlwr_demo apps/mlwr_demo.cpp)
 target_link_libraries(mlwr_demo PRIVATE mlwr)
 add_executable(mlwr_experiment apps/mlwr_experiment.cpp apps/compact_experiment.cpp)
 target_link_libraries(mlwr_experiment PRIVATE mlwr)
+add_executable(mlwr_bootstrap apps/mlwr_bootstrap.cpp)
+target_link_libraries(mlwr_bootstrap PRIVATE mlwr)
+add_executable(standard_gadget_checks tests/standard_gadget_checks.cpp)
+target_link_libraries(standard_gadget_checks PRIVATE mlwr)
+add_executable(bootstrap_checks tests/bootstrap_checks.cpp)
+target_link_libraries(bootstrap_checks PRIVATE mlwr)
 
 enable_testing()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME bootstrap_bridge_contract COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/bootstrap-contract.json $<TARGET_FILE:bootstrap_checks>)
+set_tests_properties(bootstrap_bridge_contract PROPERTIES TIMEOUT 180)
+add_test(NAME bootstrap_parameter_configuration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bootstrap_cli.py $<TARGET_FILE:mlwr_bootstrap>)
+add_test(NAME sparse_clear_transform_oracle COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_sparse_transform_oracle.py)
+add_test(NAME standard_gadget_contract COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
+    ${CMAKE_BINARY_DIR}/evidence/standard-gadget.json $<TARGET_FILE:standard_gadget_checks>)
+set_tests_properties(standard_gadget_contract PROPERTIES TIMEOUT 180)
 add_test(NAME openfhe_reference COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_recorded_check.py
     ${CMAKE_BINARY_DIR}/evidence/openfhe-reference.json $<TARGET_FILE:openfhe_reference>)

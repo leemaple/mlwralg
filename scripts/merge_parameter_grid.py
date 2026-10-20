@@ -25,8 +25,8 @@ def main():
         if summary is None:
             summary=dict(report);summary['started_utc']=report['started_utc']
         else:
-            for field in ('source_commit','source_identity','runner_sha256','base_parameters','compact','per_ring_parameters'):
-                assert report[field]==summary[field],field
+            for field in ('source_commit','source_identity','runner_sha256','base_parameters','compact','per_ring_parameters','optimized','depth_overrides'):
+                assert report.get(field)==summary.get(field),field
             summary['started_utc']=min(summary['started_utc'],report['started_utc'])
         summary['completed_utc']=max(summary.get('completed_utc',''),report['completed_utc'])
         for row in report['results']:
