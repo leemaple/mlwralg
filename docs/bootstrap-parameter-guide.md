@@ -76,8 +76,10 @@ python3 scripts/run_bootstrap.py build/evidence/my-bootstrap build-p03/mlwr_boot
 |参数|预置值|含义|
 |---|---|---|
 |`N`, `l`, `k`, `slots`|65536、2、2、8或64|自举与外层密文使用同一 N；没有环切换。有效槽在完整 N/2 槽中重复|
-|`scale_bits`, `first_mod_bits`|55、56|自举的精度与首模数。不能直接照搬小参数模式的27.83|
-|`usable_levels`|8|加在内核自举预算之上的层数，**不是保证每轮可用8次乘法**。两轮校正、归并规范化会消耗层数；程序输出真实层号|
+|`security_bits`|128；128/192/256|完整公开模数按所选档重新检查；本轮正式对照固定128|
+|`precision_bits`|20；8..40|最大复数绝对误差目标2⁻precision_bits；不能以放松门槛当作同精度改进|
+|`scale_bits`, `first_mod_bits`|55、56|前者41..59，后者必须更大且≤60；自举的精度与首模数。不能直接照搬小参数模式的27.83|
+|`usable_levels`|8；1..20|加在内核自举预算之上的层数，**不是保证每轮可用8次乘法**。两轮校正、归并规范化会消耗层数；程序输出真实层号|
 |`cts_levels`, `stc_levels`|1、1|原生支持1..4；P03小区间当前只支持1/1|
 |`large_digits`|5；1..8|HYBRID 分组数；某些组数不能分配当前塔数，会明确拒绝|
 |`module_gadget_bits`|30；4..30|模块参考引擎的平衡分解位数。0启用原来的大 P 方式，通常更大更慢|
@@ -88,10 +90,14 @@ python3 scripts/run_bootstrap.py build/evidence/my-bootstrap build-p03/mlwr_boot
 |`hybrid_multiply`|1|刷新后的显式折叠 RLWE/HYBRID 密文乘法。0使用原模块 gadget 乘法；其大模数重线性化密钥生成可能很慢|
 |`circuit_depth`|20；1..100|完整的连续密文乘法次数，与输入耗尽后发生的实际刷新次数分别输出|
 |`family`|0、1、2|符号交替实数、非对称复数、正弦余弦消息；批量脚本自动覆盖三类|
-|`correction_factor`|0自动|OpenFHE内部修正参数；除非有可验证的实验依据，保持自动|
+|`correction_factor`|0自动；0..20|OpenFHE内部修正参数；除非有可验证的实验依据，保持自动|
 |`refresh_probe`|0|1仅检查一次刷新、无续算。正式资格化禁止使用此开关|
 
 本自举电路是 `m₀ × μ × … × μ`，每次 μ 都以密文参与，`|μ|=0.985`，40次后幅度仍约为初始值的0.546倍。它与 compact 的连续平方电路不同，两者耗时不能直接相除冒充加速比。
+
+自举的接口范围为N=4096..131072的2次幂，l/k分别1..8，slots是≤N/2的2次幂；通过数值范围检查仍需通过安全预算和真实计算。配置文件写 `N`、`scale_bits`，命令行对应 `--n`、`--scale-bits`。重复键、未知参数和非法数值会被拒绝，命令行同名参数可覆盖配置文件。
+
+批量脚本另有三个参数，只写在 `run_bootstrap.py` 命令行，不放进自举配置文件：`--key-trials` 为每个消息族的新密钥次数（1..10，正式单批至少3）；`--timeout` 为每个C++进程的秒数（40层使用900）；`--experiment-class` 为diagnostic或qualification。独立明文复算时间不计入这个C++进程上限。分片模式每片设1次和diagnostic，全部三片核验后才合成资格化结果。
 
 ## 5. 结果看哪里，怎样判断改得对
 

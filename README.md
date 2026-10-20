@@ -17,8 +17,9 @@ PlainMult、Mult、Rescale、KSGen/KeySwitch、RotateKeyGen/Rotate。
 这不是原交底书自带的自举证明，也没有把 N65536 的刷新写成 N8192 自举。
 
 10月20日本轮扩展的入口是 [小参数与自举参数手册](docs/bootstrap-parameter-guide.md)
-和 [这次改了什么／源码导读](docs/bootstrap-code-guide.md)。其中 N8192 五层候选位于
+和 [这次改了什么／源码导读](docs/bootstrap-code-guide.md)。其中已测 N8192 五层配置位于
 `configs/compact/n8192-depth5.conf`，自举配置位于 `configs/bootstrap/`。
+[小参数实测结果](docs/compact-results-20261020.md)列出同机时间、实际误差、模数和密钥规模。
 测量状态以各批次原始汇总为准；已有交付数据保持冻结。
 
 ## 构建和运行

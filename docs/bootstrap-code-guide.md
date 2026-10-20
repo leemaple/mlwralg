@@ -22,6 +22,8 @@
 - `apps/mlwr_bootstrap.cpp`：客户端生成测试密文，在评估调用外解密检查每一步；记录每个全槽输出和阶段耗时。
 - `scripts/verify_bootstrap.py`：独立140位十进制明文乘法，不调用C++参考值或OpenFHE；核对完整槽位、真实层恢复、安全表、误差、总时间。
 - `scripts/run_bootstrap.py`：三把新密钥×三类消息，禁止把单刷新探针记成资格化；保存失败和哈希。
+- `scripts/merge_bootstrap_shards.py`：将12个已验收的同机对照片合为72次完整批次，外层索引记录片号，原始文件字节不变。
+- `scripts/audit_bootstrap_shard.py`：独立发布门槛；绑定GitHub原ZIP与文件、固定源/运行脚本，重新计算140位全槽明文链，并从原始输出重新求同机时间比。
 
 `Refresh`、`HybridMultiply`、`ProjectRepeated`的接口没有私钥参数，也不调用解密/重加密。`apps/`里的解密只用于实验验收。评估键仍带来额外安全假设，128参数表不是这套桥接的完整安全证明。
 
@@ -30,6 +32,8 @@
 compact 的 `multiply_tensor`、`multiply_relinearize`、`multiply_rescale`来自同一次乘法，`multiply_total`是合计；`depth_square_circuit`是完整连续平方。不要把三个独立最佳样本相加。
 
 bootstrap 每条记录的 `ms`是该完整评估操作；`phases_ms`进一步拆解折叠、内核、归一化、归并、导入，以及乘法三阶段。原生内核stderr中的 CtS/EvalMod/StC 是内核内部子阶段，**不能再加到已包含它们的总时间里**。setup与各类keygen另列；端到端部署一次性成本应另行加上这些项目和输入加密。
+
+分片实验每组有三台runner，汇总绝对秒数只描述本批成本。性能变化先在每台机器内比较P03与原生，再取三个比值的中位数；对应CPU和每个比值都在 `自举同机分片对照.csv`。`自举各阶段原始时间.csv` 展开每一次运行的阶段记录，带有机器、案例和计时范围，不能把不同层级的时间重复相加。
 
 ## 四篇论文的使用边界
 
