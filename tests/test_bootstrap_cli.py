@@ -5,6 +5,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
+from run_bootstrap import parse_arguments
+
 binary=str(Path(sys.argv[1]).resolve())
 checks=0
 def run(*args,fail=False):
@@ -24,4 +27,16 @@ with tempfile.TemporaryDirectory() as directory:
     assert len(r['Q_primes'])==21 and r['checked_public_bits']<=1747
     p.write_text('N=65536\nN=65536\n')
     run('--config',p,'--print-parameters',fail=True)
+    # Real regression: argparse's default prefix matching consumed --k as
+    # --key-trials, rejecting k=2 or silently running k=2 when k=3 was requested.
+    p.write_text('N=65536\n')
+    for k in ('2','3'):
+        for forwarded_first in (False,True):
+            forwarded=['--k',k,'--slots','64','--paper-sparse','1','--circuit-depth','40']
+            runner=['--key-trials','3','--experiment-class','qualification']
+            argv=[str(Path(directory)/'evidence'),binary,'--config',str(p)]
+            argv+=forwarded+runner if forwarded_first else runner+forwarded
+            args,extra=parse_arguments(argv)
+            assert args.key_trials==3 and extra==forwarded,(args,extra)
+            checks+=1
 print(json.dumps({'checks':checks,'passed':True}))

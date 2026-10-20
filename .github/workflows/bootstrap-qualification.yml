@@ -1,6 +1,17 @@
 name: Bootstrap and compact matched qualification
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Run the whole suite or only one independent experiment family'
+        type: choice
+        options: [all, bootstrap, compact]
+        default: all
+      circuit_depth:
+        description: 'Actual encrypted-factor multiplications, 1..100'
+        type: choice
+        options: ['40', '20', '60', '80']
+        default: '40'
   push:
     branches: [codex/bootstrap-four-papers]
     paths: ['src/**','include/**','apps/**','patches/**','configs/**','scripts/**','tests/**','CMakeLists.txt','.github/workflows/bootstrap-qualification.yml']
@@ -8,6 +19,7 @@ permissions:
   contents: read
 jobs:
   bootstrap:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'compact' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -39,10 +51,10 @@ jobs:
         run: |
           python3 scripts/run_bootstrap.py build/evidence/bootstrap-native build/mlwr_bootstrap \
             --config configs/bootstrap/native-n65536.conf --key-trials 3 --experiment-class qualification \
-            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 0
+            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 0 --circuit-depth ${{ inputs.circuit_depth || '40' }}
           python3 scripts/run_bootstrap.py build/evidence/bootstrap-p03 build/mlwr_bootstrap \
             --config configs/bootstrap/native-n65536.conf --key-trials 3 --experiment-class qualification \
-            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 1
+            --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 1 --circuit-depth ${{ inputs.circuit_depth || '40' }}
       - name: Preserve all outcomes
         if: always()
         uses: actions/upload-artifact@v4
@@ -53,6 +65,7 @@ jobs:
             build/Testing/Temporary/LastTest.log
             .deps/p03-*-install/mlwr-port-manifest.json
   compact-comparison:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'bootstrap' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:

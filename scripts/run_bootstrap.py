@@ -11,20 +11,27 @@ from run_experiment import command, digest, environment, source_identity, write_
 from verify_bootstrap import verify
 
 
-def main():
-    parser=argparse.ArgumentParser(description=__doc__)
+def parse_arguments(argv=None):
+    # Unknown options belong to the C++ executable. In particular --k must not
+    # abbreviate --key-trials and silently replace the number of fresh keys.
+    parser=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
     parser.add_argument('output',type=Path);parser.add_argument('executable',type=Path)
     parser.add_argument('--config',type=Path,required=True)
     parser.add_argument('--key-trials',type=int,default=3)
     parser.add_argument('--timeout',type=int,default=360)
     parser.add_argument('--experiment-class',choices=['diagnostic','qualification'],default='diagnostic')
-    args,extra=parser.parse_known_args()
+    args,extra=parser.parse_known_args(argv)
     if not 1<=args.key_trials<=10 or args.timeout<1:parser.error('Invalid repetitions/timeout')
     if args.experiment_class=='qualification':
         if args.key_trials<3:parser.error('Qualification requires at least three fresh keys per family')
         if '--refresh-probe' in extra or re.search(r'^\s*refresh[_-]probe\s*=\s*1',args.config.read_text(),re.M):
             parser.error('Refresh-only probes cannot qualify a continued circuit')
     if args.output.exists() and any(args.output.iterdir()):parser.error('Use a new evidence directory')
+    return args,extra
+
+
+def main():
+    args,extra=parse_arguments()
     args.output.mkdir(parents=True,exist_ok=True)
     root=Path(__file__).resolve().parents[1];binary=args.executable.resolve(strict=True)
     identity=source_identity(root);binary_hash=digest(binary)
