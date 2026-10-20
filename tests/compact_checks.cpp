@@ -47,13 +47,17 @@ int main(){try{
         auto profile=CompactProfile(1,8,8192,32,54,128,18,20,17,14,32.5,true);
         profile.symmetric_relinearization=true;
         CompactScheme optimized(profile,2,k);
+        // Keep the shared basis alive throughout the range-for in C++17.
+        // basis() returns a new shared_ptr; iterating through a reference to
+        // its temporary object's vector would leave a dangling range.
+        const auto ciphertext_basis=optimized.basis(0);
         Require(optimized.public_basis()->GetModulus() >
-            optimized.basis(0)->GetModulus()*(Integer(1)<<16));
-        Require(optimized.public_basis()->GetParams().size()<optimized.basis(0)->GetParams().size()+1);
+            ciphertext_basis->GetModulus()*(Integer(1)<<16));
+        Require(optimized.public_basis()->GetParams().size()<ciphertext_basis->GetParams().size()+1);
         for(const auto& t:optimized.public_basis()->GetParams()) {
             Require(t->GetModulus().GetMSB()<=60);
             Require(t->GetRootOfUnity().ModExp(lbcrypto::NativeInteger(8192),t->GetModulus())==t->GetModulus()-1);
-            for(const auto& q:optimized.basis(0)->GetParams())Require(t->GetModulus()!=q->GetModulus());
+            for(const auto& q:ciphertext_basis->GetParams())Require(t->GetModulus()!=q->GetModulus());
         }
         const auto ok=optimized.KeyGen();const auto rk=optimized.RelinGen(ok.secret_key);
         Require(rk.rows.size()==k*(k+1)/2*optimized.digits());
