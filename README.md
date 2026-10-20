@@ -20,6 +20,8 @@ PlainMult、Mult、Rescale、KSGen/KeySwitch、RotateKeyGen/Rotate。
 和 [这次改了什么／源码导读](docs/bootstrap-code-guide.md)。其中已测 N8192 五层配置位于
 `configs/compact/n8192-depth5.conf`，自举配置位于 `configs/bootstrap/`。
 [小参数实测结果](docs/compact-results-20261020.md)列出同机时间、实际误差、模数和密钥规模。
+[40次乘法自举实测](docs/bootstrap-results-20261020.md)给出72次全槽验收及原生/P03同机对照：
+64槽下P03总耗时中位降低8.2%（k=2）、7.4%（k=3）；8槽优先保留更快的原生路径。
 测量状态以各批次原始汇总为准；已有交付数据保持冻结。
 
 ## 构建和运行
