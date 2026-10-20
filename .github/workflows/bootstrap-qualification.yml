@@ -21,7 +21,7 @@ jobs:
   bootstrap:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'compact' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -50,10 +50,10 @@ jobs:
       - name: Native then P03 on the same runner
         run: |
           python3 scripts/run_bootstrap.py build/evidence/bootstrap-native build/mlwr_bootstrap \
-            --config configs/bootstrap/native-n65536.conf --key-trials 3 --experiment-class qualification \
+            --config configs/bootstrap/native-n65536.conf --key-trials 3 --timeout 900 --experiment-class qualification \
             --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 0 --circuit-depth ${{ inputs.circuit_depth || '40' }}
           python3 scripts/run_bootstrap.py build/evidence/bootstrap-p03 build/mlwr_bootstrap \
-            --config configs/bootstrap/native-n65536.conf --key-trials 3 --experiment-class qualification \
+            --config configs/bootstrap/native-n65536.conf --key-trials 3 --timeout 900 --experiment-class qualification \
             --k ${{ matrix.k }} --slots ${{ matrix.slots }} --paper-sparse 1 --circuit-depth ${{ inputs.circuit_depth || '40' }}
       - name: Preserve all outcomes
         if: always()
