@@ -41,5 +41,36 @@ int main(){try{
     auto badrotation=rotation;badrotation.switching.digit_count=0;Reject([&]{scheme.Rotate(pair,badrotation);});
     Reject([&]{ResearchScheme wrong(scheme.profile(),2,2);});
     Reject([&]{scheme.Rescale2(result);});
+    // Unequal complex operands exercise off-diagonal aggregation; a square
+    // alone would not detect an i/j indexing error in a mixed product.
+    for(uint32_t k:{2u,3u}) {
+        auto profile=CompactProfile(1,8,8192,32,54,128,18,20,17,14,32.5,true);
+        profile.symmetric_relinearization=true;
+        CompactScheme optimized(profile,2,k);
+        Require(optimized.public_basis()->GetModulus() >
+            optimized.basis(0)->GetModulus()*(Integer(1)<<16));
+        Require(optimized.public_basis()->GetParams().size()<optimized.basis(0)->GetParams().size()+1);
+        for(const auto& t:optimized.public_basis()->GetParams()) {
+            Require(t->GetModulus().GetMSB()<=60);
+            Require(t->GetRootOfUnity().ModExp(lbcrypto::NativeInteger(8192),t->GetModulus())==t->GetModulus()-1);
+            for(const auto& q:optimized.basis(0)->GetParams())Require(t->GetModulus()!=q->GetModulus());
+        }
+        const auto ok=optimized.KeyGen();const auto rk=optimized.RelinGen(ok.secret_key);
+        Require(rk.rows.size()==k*(k+1)/2*optimized.digits());
+        Slots a,b,product;
+        for(uint32_t j=0;j<8;++j) {
+            a.emplace_back((int(j)-4)/8.,(j%3-1.)/8.);
+            b.emplace_back((7.-j)/10.,(j%2?-1.:1.)/6.);
+            product.push_back(a.back()*b.back());
+        }
+        const auto ca=optimized.Decompose(optimized.Encrypt(ok.public_key,optimized.Encode(a,1.)));
+        const auto cb=optimized.Decompose(optimized.Encrypt(ok.public_key,optimized.Encode(b,1.)));
+        const auto tensor2=optimized.Tensor2(ca,cb);
+        const auto reduced=optimized.Relin2(tensor2,rk);
+        Close(optimized.Decrypt(ok.secret_key,optimized.Rescale2(reduced)),product);
+        auto broken=rk;broken.rows.pop_back();Reject([&]{optimized.Relin2(tensor2,broken);});
+        broken=rk;broken.rows.insert(broken.rows.end(),rk.rows.begin(),rk.rows.begin()+optimized.digits());
+        Reject([&]{optimized.Relin2(tensor2,broken);});
+    }
     std::cout<<"{\"checks\":"<<checks<<",\"max_error\":"<<worst<<",\"passed\":true}\n";
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

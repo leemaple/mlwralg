@@ -24,4 +24,20 @@ for options in [('--gadget-bits','3'),('--gadget-bits','31'),('--divisor-bits','
                 ('--public-extra-bits','15'),('--n','0'),('--compact','--compact')]:
  run('--config',root/'configs/compact/n4096.conf',*options,'--print-parameters',fail=True)
 run('--config',root/'configs/compact/n8192.conf','--depth','5','--print-parameters',fail=True)
+run('--config',root/'configs/compact/n8192.conf','--symmetric-relinearization','2','--print-parameters',fail=True)
+r=json.loads(run('--config',root/'configs/compact/n8192.conf','--symmetric-relinearization','1','--print-parameters').stdout)
+assert r['profile']['symmetric_relinearization'] is True
+assert r['requested_parameters']['symmetric_relinearization']==1
+r=json.loads(run('--config',root/'configs/compact/n8192.conf','--depth','5','--scale-bits','27',
+                 '--scale-log2','27.5','--first-mod-bits','46','--divisor-bits','16','--print-parameters').stdout)
+assert r['requested_parameters']['scale_log2']==27.5
+assert r['profile']['checked_public_modulus_bits']<=218
+import math
+assert all(abs(math.log2(int(p['prime']))-27.5)<.02 for p in r['profile']['ciphertext_basis'][1:-1])
+for bad in ['nan','inf','-1','28.5']:
+ run('--config',root/'configs/compact/n8192.conf','--scale-bits','27','--scale-log2',bad,'--print-parameters',fail=True)
+r=json.loads(run('--config',root/'configs/compact/n8192.conf','--depth','5','--scale-bits','27',
+ '--scale-log2','27.83','--first-mod-bits','46','--divisor-bits','16','--packed-public-key','1','--print-parameters').stdout)
+assert r['profile']['packed_public_key'] is True and r['profile']['checked_public_modulus_bits']==218
+run('--config',root/'configs/compact/n8192.conf','--packed-public-key','2','--print-parameters',fail=True)
 print(json.dumps({'checks':checks,'passed':True}))

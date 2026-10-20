@@ -13,8 +13,11 @@ struct RunOptions {
     uint32_t initial_scale_bits = 0;
     int32_t rotation_steps = 1;
     double message_bound = 2;
+    double scale_log2 = 0; // compact-only fractional prime target; zero keeps OpenFHE chain
     bool help = false, print_parameters = false;
     bool compact = false;
+    bool symmetric_relinearization = false;
+    bool packed_public_key = false;
     uint32_t divisor_bits = 20, gadget_bits = 20, public_extra_bits = 20;
     uint32_t rotation_gadget_bits = 14;
     Profile MakeProfile() const;

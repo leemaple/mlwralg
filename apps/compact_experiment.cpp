@@ -429,7 +429,10 @@ int mlwr::RunCompactExperiment(std::ostream& output, const RunOptions& options) 
         report << ",\"Q_auxiliary\":"; BasisJson(report, scheme.profile().auxiliary);
         report << ",\"T_public\":"; BasisJson(report, scheme.public_basis());
         report << ",\"W_source\":"; BasisJson(report, scheme.source_basis());
-        report << ",\"DCP_divisor\":\"" << scheme.divisor() << "\",\"BV_key_digits\":" << scheme.digits() << '}';
+        const auto products=scheme.profile().symmetric_relinearization?scheme.k()*(scheme.k()+1)/2:scheme.k()*scheme.k();
+        report << ",\"DCP_divisor\":\"" << scheme.divisor() << "\",\"BV_key_digits\":" << scheme.digits()
+               << ",\"relinearization_secret_products\":" << products
+               << ",\"relinearization_key_rows\":" << products*scheme.digits() << '}';
         if (options.print_parameters) { output << report.str() << "}\n"; return 0; }
         report << ",\"protocol\":{\"precision_target_bits\":" << target_bits << ",\"absolute_tolerance\":"
             << tolerance << ",\"target_origin\":\"configured absolute-error target, not log2(scale)\","

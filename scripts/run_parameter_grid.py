@@ -80,6 +80,9 @@ def make_report(output, summary):
 <p><a href="summary.csv">60 组汇总 CSV</a> · <a href="timings.csv">各阶段完整计时 CSV</a> · <a href="summary.json">完整索引 JSON</a>。每组目录包含配置、原始日志；通过组另有 experiment.json、逐槽误差、各层误差、实际模数与计时原始样本。</p>
 <table><thead><tr><th>l</th><th>k</th><th>N</th><th>深度</th><th>结果</th><th>建议最低 N</th><th>逐层最大误差</th><th>完整电路均值/ms</th><th>依据</th></tr></thead><tbody>{''.join(body)}</tbody></table>
 <p><small>生成时间 {summary['completed_utc']}；实现 SHA-256 {summary['source_identity']['sha256']}。1/Δ 的严格比较另列于 CSV 和每组原始数据中，不以 20 位目标代替。</small></p></html>'''
+    if summary.get('optimized'):
+        text=text.replace('采用论文启发', '采用论文启发')
+        text=text.replace('<table><thead>', '<p>本轮启用对称重线性化与紧凑公钥 T；N8192、depth≥5 使用 27.83 位目标、first46、divisor16，其余具体值见 requested.conf。</p><table><thead>')
     if summary.get('compact'):
         text=text.replace('MLWR：60 组参数测试结果','MLWR：低模数版本 60 组参数测试结果')
         text=text.replace('其余配置保持默认：slots=8、scale_bits=50、first_mod_bits=60、单 digit HYBRID；',
@@ -98,10 +101,12 @@ def main():
     parser.add_argument('--key-trials', type=int, default=3)
     parser.add_argument('--timeout', type=int, default=1800, help='Seconds per accepted configuration')
     parser.add_argument('--compact', action='store_true', help='Use per-N paper-inspired compact profiles')
+    parser.add_argument('--optimized', action='store_true', help='Symmetric keys, packed public T and N8192 depth-five profile')
     parser.add_argument('--only-k',type=int,choices=(2,3))
     parser.add_argument('--only-n',type=int,choices=(4096,8192,16384))
     parser.add_argument('--only-depth',type=int,choices=range(1,11))
     args = parser.parse_args()
+    if args.optimized and not args.compact:parser.error('--optimized requires --compact')
     selected=[g for g in GRID if (args.only_k is None or g[1]==args.only_k) and
               (args.only_n is None or g[2]==args.only_n) and
               (args.only_depth is None or g[3]==args.only_depth)]
@@ -118,7 +123,7 @@ def main():
         line = line.split('#', 1)[0].strip()
         if line:
             key, value = (x.strip() for x in line.split('=', 1))
-            base[key] = float(value) if key == 'message_bound' else int(value)
+            base[key] = float(value) if key in ('message_bound','scale_log2') else int(value)
     base.update(security_bits=128, l=2, samples=args.samples, warmups=args.warmups, key_trials=args.key_trials)
     families = {}
     if args.compact:
@@ -128,15 +133,21 @@ def main():
                 line=line.split('#',1)[0].strip()
                 if line:
                     key,value=(x.strip() for x in line.split('=',1))
-                    settings[key]=float(value) if key=='message_bound' else int(value)
+                    settings[key]=float(value) if key in ('message_bound','scale_log2') else int(value)
             settings.update(security_bits=128,l=2,samples=args.samples,warmups=args.warmups,key_trials=args.key_trials)
+            if args.optimized:settings.update(symmetric_relinearization=1,packed_public_key=1)
             families[str(n)] = settings
+    for defaults in [base,*families.values()]:
+        defaults.setdefault('symmetric_relinearization',0);defaults.setdefault('packed_public_key',0);defaults.setdefault('scale_log2',0)
+    overrides={}
+    if args.optimized:
+        overrides['8192:5+']={'scale_bits':27,'scale_log2':27.83,'first_mod_bits':46,'divisor_bits':16}
     summary = {'schema_version': 1, 'started_utc': datetime.now(timezone.utc).isoformat(),
                'source_commit': command('git', '-C', str(root), 'rev-parse', 'HEAD'),
                'source_identity': source_identity(root), 'environment': environment(executable),
                'base_parameters': base, 'expected_cases': len(selected), 'results': [],
                'selection': {'k':args.only_k,'N':args.only_n,'depth':args.only_depth},
-               'compact': args.compact, 'per_ring_parameters': families,
+               'compact': args.compact, 'optimized':args.optimized,'depth_overrides':overrides,'per_ring_parameters': families,
                'runner_sha256': {name: digest(root / 'scripts' / name) for name in
                    ('run_parameter_grid.py', 'run_experiment.py', 'verify_experiment.py', 'verify_parameter_grid.py','precision_failure.py')}}
     (output / 'run-metadata.json').write_text(json.dumps(summary, indent=2) + '\n')
@@ -145,6 +156,9 @@ def main():
         folder = output / 'cases' / label
         folder.mkdir(parents=True)
         config = dict(families.get(str(n),base), l=l, k=k, N=n, depth=depth)
+        if args.optimized and n==8192 and depth>=5:config.update(overrides['8192:5+'])
+        # Persist all newly supported defaults so CLI preflight equality is exact.
+        config.setdefault('symmetric_relinearization',0);config.setdefault('packed_public_key',0);config.setdefault('scale_log2',0)
         config_path = folder / 'requested.conf'
         config_path.write_text(''.join(f'{key} = {value}\n' for key, value in config.items()))
         result = {'case_id': label, 'l': l, 'k': k, 'N': n, 'depth': depth, 'security_bits': 128,

@@ -1,5 +1,6 @@
 #include "mlwr/profile.hpp"
 
+#include <cmath>
 #include <iomanip>
 #include <ostream>
 #include <set>
@@ -84,6 +85,8 @@ void WriteProfileJson(std::ostream& out, const Profile& profile) {
     if (profile.compact) out << ",\"construction_mode\":\"compact_pair_bv\",\"gadget_bits\":"
         << profile.gadget_bits << ",\"public_extra_bits\":" << profile.public_extra_bits
         << ",\"rotation_gadget_bits\":" << profile.rotation_gadget_bits
+        << ",\"symmetric_relinearization\":" << (profile.symmetric_relinearization ? "true" : "false")
+        << ",\"packed_public_key\":" << (profile.packed_public_key ? "true" : "false")
         << ",\"checked_public_modulus_bits\":" << profile.checked_public_bits
         << ",\"key_switch_technique\":\"gadget_small_P\"";
     out << '}';
@@ -120,17 +123,49 @@ RnsParams IndependentLargerBasis(const RnsParams& model, const RnsParams& exclud
     return result;
 }
 
+RnsParams PackedLargerBasis(const RnsParams& model,uint32_t extra_bits) {
+    if(extra_bits<16 || extra_bits>40)throw std::invalid_argument("Packed public extra bits must be 16..40");
+    const auto target=model->GetModulus()*(Integer(1)<<(extra_bits-1));
+    const auto count=(target.GetMSB()+58)/59;
+    const auto order=model->GetCyclotomicOrder();
+    std::set<uint64_t> used;
+    for(const auto& p:model->GetParams())used.insert(p->GetModulus().ConvertToInt());
+    Integer product(1);std::vector<uint64_t> primes;
+    auto large=lbcrypto::LastPrime<lbcrypto::NativeInteger>(59,order);
+    for(uint32_t i=0;i<count;++i) {
+        lbcrypto::NativeInteger candidate;
+        if(i+1==count) {
+            const auto needed=(target/product).ConvertToInt();
+            candidate=lbcrypto::NextPrime(lbcrypto::NativeInteger(needed/order*order+1),order);
+            while(used.count(candidate.ConvertToInt()))candidate=lbcrypto::NextPrime(candidate,order);
+        } else {
+            candidate=large;
+            while(used.count(candidate.ConvertToInt()))candidate=lbcrypto::PreviousPrime(candidate,order);
+            large=lbcrypto::PreviousPrime(candidate,order);
+        }
+        if(candidate.GetMSB()>60)throw std::invalid_argument("Packed public prime exceeds native 60-bit limit");
+        primes.push_back(candidate.ConvertToInt());used.insert(candidate.ConvertToInt());
+        product*=Integer(candidate.ConvertToInt());
+    }
+    if(product<=target)throw std::runtime_error("Packed public modulus did not exceed its exact target");
+    return MakeRnsParams(model->GetRingDimension(),primes);
+}
+
 Profile CompactProfile(uint32_t depth, uint32_t slots, uint32_t n, uint32_t scale_bits,
                        uint32_t first_bits, uint32_t security_bits, uint32_t divisor_bits,
-                       uint32_t gadget_bits, uint32_t public_extra_bits, uint32_t rotation_gadget_bits) {
+                       uint32_t gadget_bits, uint32_t public_extra_bits, uint32_t rotation_gadget_bits, double scale_log2,
+                       bool packed_public_key) {
     ValidateProfileOptions(depth, slots, n, scale_bits, first_bits, security_bits, true);
     if(divisor_bits<16||divisor_bits>40||gadget_bits<4||gadget_bits>30||public_extra_bits<16||public_extra_bits>40||
        rotation_gadget_bits<4||rotation_gadget_bits>30)
         throw std::invalid_argument("Compact divisor/public-extra bits 16..40 and gadget bits 4..30 required");
     if (!n) throw std::invalid_argument("Compact mode requires an explicit N for auditable parameter planning");
+    if(!std::isfinite(scale_log2) || (scale_log2 &&
+       (scale_log2<20 || scale_log2>=59 || std::floor(scale_log2)!=scale_bits || std::ceil(scale_log2)>=first_bits)))
+        throw std::invalid_argument("Invalid fractional compact prime target");
     lbcrypto::CCParams<lbcrypto::CryptoContextCKKSRNS> params;
     params.SetMultiplicativeDepth(depth); params.SetBatchSize(slots); params.SetRingDim(n);
-    params.SetScalingModSize(scale_bits); params.SetFirstModSize(first_bits);
+    params.SetScalingModSize(scale_log2?static_cast<uint32_t>(std::ceil(scale_log2)):scale_bits); params.SetFirstModSize(first_bits);
     params.SetScalingTechnique(lbcrypto::FIXEDMANUAL); params.SetKeySwitchTechnique(lbcrypto::BV);
     params.SetDigitSize(gadget_bits); params.SetCKKSDataType(lbcrypto::COMPLEX);
     const auto security = security_bits == 128 ? lbcrypto::HEStd_128_classic :
@@ -138,7 +173,25 @@ Profile CompactProfile(uint32_t depth, uint32_t slots, uint32_t n, uint32_t scal
     params.SetSecurityLevel(security);
     auto cc = lbcrypto::GenCryptoContext(params);
     auto crypto = std::dynamic_pointer_cast<lbcrypto::CryptoParametersCKKSRNS>(cc->GetCryptoParameters());
-    const auto base = crypto->GetElementParams();
+    auto base = crypto->GetElementParams();
+    if(scale_log2) {
+        // The compact engine uses the OpenFHE canonical encoder but owns its
+        // exact RNS chain. Center nearby NTT primes around 2^scale_log2 rather
+        // than rounding every requested modulus to a whole power of two.
+        // Preserve the first modulus, distinct primes and exact primitive roots.
+        const uint64_t order=2*n;
+        const uint64_t center=static_cast<uint64_t>(std::exp2(scale_log2))/order*order+1;
+        auto up=lbcrypto::NativeInteger(center),down=up;
+        std::vector<uint64_t> primes{base->GetParams().front()->GetModulus().ConvertToInt()};
+        std::set<uint64_t> used{primes.front()};
+        for(uint32_t i=0;i<depth;++i) {
+            auto& cursor=(i%2)?up:down;
+            do {cursor=(i%2)?lbcrypto::NextPrime(cursor,order):lbcrypto::PreviousPrime(cursor,order);}
+            while(used.count(cursor.ConvertToInt()));
+            used.insert(cursor.ConvertToInt());primes.push_back(cursor.ConvertToInt());
+        }
+        base=MakeRnsParams(n,primes);
+    }
     auto divisor = lbcrypto::FirstPrime<lbcrypto::NativeInteger>(divisor_bits - 1, 2 * n);
     for (;;) {
         bool used = false;
@@ -147,7 +200,8 @@ Profile CompactProfile(uint32_t depth, uint32_t slots, uint32_t n, uint32_t scal
         divisor = lbcrypto::NextPrime(divisor, 2 * n);
     }
     auto full = JoinBases(base, MakeRnsParams(n, {divisor.ConvertToInt()}));
-    auto public_basis = IndependentLargerBasis(full, nullptr, public_extra_bits, true);
+    auto public_basis = packed_public_key ? PackedLargerBasis(full,public_extra_bits) :
+                                           IndependentLargerBasis(full, nullptr, public_extra_bits, true);
     // The public key uses T > Q, so check T as well as Q. No HEStd_NotSet
     // context is created, and no security test is waived to fit a requested N.
     auto auxiliary_prime = lbcrypto::LastPrime<lbcrypto::NativeInteger>(public_extra_bits, 2*n);
@@ -166,6 +220,7 @@ Profile CompactProfile(uint32_t depth, uint32_t slots, uint32_t n, uint32_t scal
     result.compact = true; result.gadget_bits = gadget_bits;
     result.public_extra_bits = public_extra_bits; result.checked_public_bits = bits;
     result.rotation_gadget_bits = rotation_gadget_bits;
+    result.packed_public_key = packed_public_key;
     return result;
 }
 }  // namespace mlwr

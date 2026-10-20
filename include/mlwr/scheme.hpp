@@ -57,6 +57,7 @@ class ResearchScheme {
     explicit ResearchScheme(Profile profile = OpenFheProfile(), uint32_t l = 2, uint32_t k = 2);
     uint32_t l() const { return l_; }
     uint32_t k() const { return k_; }
+    uint64_t context_id() const { return id_; }
     const Profile& profile() const { return profile_; }
     const RnsParams& public_basis() const { return public_; }
     const RnsParams& source_basis() const { return source_; }
@@ -71,6 +72,7 @@ class ResearchScheme {
     Plaintext Encode(const Slots& values, uint32_t level = 0,
                      double public_bound = 2, double scale = 0) const;
     Slots Decode(const Plaintext& plaintext) const;
+    Slots DecodeAll(const Plaintext& plaintext) const;
     Ciphertext Encrypt(const PublicKey& key, const Plaintext& message) const;
     Ciphertext Encrypt(const PublicKey& key, const Slots& message) const;
     // Zero smudging is an explicit correctness diagnostic. Nonzero bounds
@@ -96,6 +98,7 @@ class ResearchScheme {
     uint32_t l_, k_;
     RnsParams extended_, public_, source_;
     uint64_t id_;
+    uint32_t key_digits_ = 1;
     void Validate(const SecretKey& key) const;
     void Validate(const Ciphertext& value) const;
     void Validate(const Plaintext& value) const;

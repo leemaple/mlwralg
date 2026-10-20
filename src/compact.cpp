@@ -1,4 +1,5 @@
 #include "mlwr/compact.hpp"
+#include "mlwr/gadget.hpp"
 #include "math/dftransform.h"
 #include <algorithm>
 #include <atomic>
@@ -11,18 +12,6 @@ std::atomic<uint64_t> compact_id{uint64_t{1} << 48};
 RingPoly Zero(const RnsParams& p) { return RingPoly(p, EVALUATION, true); }
 RingPoly Uniform(const RnsParams& p) { RingPoly::DugType g; return RingPoly(g,p,EVALUATION); }
 RingPoly Ternary(const RnsParams& p) { RingPoly::TugType g; return RingPoly(g,p,EVALUATION); }
-// Gadget digits are native signed integers, so constructing their RNS
-// residues needs no composite CRT/big-integer conversion.
-RingPoly SmallPolynomial(const RnsParams& params,const std::vector<int64_t>& digits) {
-    RingPoly out(params,COEFFICIENT,true);
-    for(size_t t=0;t<params->GetParams().size();++t){
-        const auto modulus=params->GetParams()[t]->GetModulus();const auto q=modulus.ConvertToInt();
-        lbcrypto::NativeVector values(digits.size(),modulus);
-        for(size_t i=0;i<digits.size();++i){const auto x=digits[i];const auto r=uint64_t(x<0?-x:x)%q;values[i]=lbcrypto::NativeInteger(x<0&&r?q-r:r);}
-        lbcrypto::NativePoly tower(params->GetParams()[t],COEFFICIENT,true);tower.SetValues(std::move(values),COEFFICIENT);out.SetElementAtIndex(t,std::move(tower));
-    }
-    out.SetFormat(EVALUATION);return out;
-}
 void Polynomial(const RingPoly& p, const RnsParams& expected) {
     if (p.GetFormat()!=EVALUATION || !SameBasis(p.GetParams(),expected))
         throw std::invalid_argument("Compact polynomial basis/format mismatch");
@@ -33,7 +22,8 @@ CompactScheme::CompactScheme(Profile profile, uint32_t l, uint32_t k)
     if (!profile_.compact || l<1 || l>8 || k<1 || k>8) throw std::invalid_argument("Compact profile/dimensions required");
     divisor_=profile_.ciphertext->GetParams().back()->GetModulus().ConvertToInt();
     div_basis_=MakeRnsParams(profile_.ciphertext->GetRingDimension(),{divisor_});
-    public_=IndependentLargerBasis(profile_.ciphertext,nullptr,profile_.public_extra_bits,true);
+    public_=profile_.packed_public_key?PackedLargerBasis(profile_.ciphertext,profile_.public_extra_bits):
+        IndependentLargerBasis(profile_.ciphertext,nullptr,profile_.public_extra_bits,true);
     evaluation_=JoinBases(profile_.ciphertext,profile_.auxiliary);
     source_=IndependentLargerBasis(evaluation_,public_);
     if (source_->GetModulus()<=public_->GetModulus()) throw std::invalid_argument("Compact source must exceed public modulus");
@@ -89,7 +79,7 @@ KeyPair CompactScheme::KeyGen() const {
 RelinearizationKey CompactScheme::RelinGen(const SecretKey& key) const {
     ValidateSecret(key);RelinearizationKey out;out.context=id_;out.key_tag=key.tag;
     std::vector<RingPoly> secret;for(const auto& s:key.s)secret.push_back(LiftCentered(s,source_));
-    for(uint32_t i=0;i<k_;++i)for(uint32_t j=0;j<k_;++j){
+    for(uint32_t i=0;i<k_;++i)for(uint32_t j=profile_.symmetric_relinearization?i:0;j<k_;++j){
         auto power=Integer(1);const auto product=key.s[i]*key.s[j];
         for(uint32_t d=0;d<digits_;++d){const auto embedding=MultiplyInteger(LiftCentered(product,evaluation_),power*profile_.auxiliary->GetModulus());out.rows.push_back(MakeRow(secret,evaluation_,&embedding));power<<=profile_.gadget_bits;}
     }
@@ -161,36 +151,25 @@ PairTensor CompactScheme::Tensor2(const PairCiphertext& a,const PairCiphertext& 
     out.scale=a.scale*b.scale/double(divisor_);out.bound=a.bound*b.bound;out.level=a.level;out.context=id_;out.key_tag=a.key_tag;ValidateTensor(out);return out;
 }
 Row CompactScheme::Switch(const std::vector<RingPoly>& multipliers,const std::vector<Row>& rows,const RnsParams& target,uint32_t digit_bits,uint32_t digit_count) const {
-    if(digit_bits<1||digit_bits>30||rows.size()!=multipliers.size()*digit_count)throw std::invalid_argument("Compact gadget key row count mismatch");
-    const auto n=target->GetRingDimension();const uint64_t base=uint64_t{1}<<digit_bits;const Integer big_base(base);
-    const auto extended=JoinBases(target,profile_.auxiliary);
-    Row out(k_+1,Zero(extended));
-    for(size_t i=0;i<multipliers.size();++i){
-        Polynomial(multipliers[i],target);const auto q=target->GetModulus();const auto coefficients=Coefficients(multipliers[i]);
-        std::vector<std::vector<int64_t>> digits(digit_count,std::vector<int64_t>(n));
-        for(size_t c=0;c<n;++c){const bool negative=coefficients[c]>(q>>1);auto magnitude=negative?q-coefficients[c]:coefficients[c];
-            for(uint32_t d=0;d<digit_count;++d){const auto remainder=magnitude.Mod(big_base).ConvertToInt();
-                const int64_t digit=remainder>base/2?int64_t(remainder)-int64_t(base):int64_t(remainder);
-                digits[d][c]=negative?-digit:digit;
-                magnitude=digit<0?(magnitude+Integer(uint64_t(-digit)))/big_base:(magnitude-Integer(uint64_t(digit)))/big_base;
-            }
-            if(magnitude!=Integer(0))throw std::invalid_argument("Compact balanced decomposition overflow");
-        }
-        for(uint32_t d=0;d<digit_count;++d){const auto& row=rows[i*digit_count+d];ValidateRow(row,evaluation_);
-            if(std::all_of(digits[d].begin(),digits[d].end(),[](int64_t x){return x==0;}))continue;
-            const auto digit=SmallPolynomial(extended,digits[d]);
-            for(uint32_t j=0;j<=k_;++j){
-                if(SameBasis(row[j].GetParams(),extended))out[j]+=digit*row[j];
-                else out[j]+=digit*SelectBasis(row[j],extended);
-            }
-        }
-    }
-    for(auto& component:out)component=ScaleAndRound(component,target);
-    return out;
+    return GadgetSwitch(multipliers,rows,target,evaluation_,profile_.auxiliary,k_+1,digit_bits,digit_count);
 }
 Row CompactScheme::RawRelin(const TensorCiphertext& tensor,const RelinearizationKey& key,const RnsParams& p) const {
     ValidateRow(tensor.linear,p);if(tensor.quadratic.size()!=k_*k_)throw std::invalid_argument("Compact tensor shape mismatch");
-    auto out=tensor.linear;auto switched=Switch(tensor.quadratic,key.rows,p,profile_.gadget_bits,digits_);for(uint32_t j=0;j<=k_;++j)out[j]+=switched[j];return out;
+    // s_i*s_j == s_j*s_i in this commutative quotient ring. Aggregate the
+    // corresponding ciphertext coefficients BEFORE gadget decomposition, so
+    // one switching row per unordered pair represents the exact same phase.
+    // This does not omit a term or change a scale/modulus/security setting.
+    std::vector<RingPoly> symmetric;
+    if(profile_.symmetric_relinearization) {
+        symmetric.reserve(k_*(k_+1)/2);
+        for(uint32_t i=0;i<k_;++i)for(uint32_t j=i;j<k_;++j) {
+            auto combined=tensor.quadratic[i*k_+j];
+            if(i!=j)combined+=tensor.quadratic[j*k_+i];
+            symmetric.push_back(std::move(combined));
+        }
+    }
+    const auto& coefficients=profile_.symmetric_relinearization?symmetric:tensor.quadratic;
+    auto out=tensor.linear;auto switched=Switch(coefficients,key.rows,p,profile_.gadget_bits,digits_);for(uint32_t j=0;j<=k_;++j)out[j]+=switched[j];return out;
 }
 PairCiphertext CompactScheme::Relin2(const PairTensor& tensor,const RelinearizationKey& key,Row* raised_trace,Row* low_trace) const {
     ValidateTensor(tensor);if(key.context!=id_||key.key_tag!=tensor.key_tag)throw std::invalid_argument("Compact relinearization key mismatch");

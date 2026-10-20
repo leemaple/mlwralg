@@ -29,16 +29,20 @@ std::string Key(std::string key) {
     return key;
 }
 void Set(RunOptions& options, const std::string& name, const std::string& value) {
-    if (Key(name) == "compact") {
+    if (Key(name) == "compact" || Key(name) == "symmetric_relinearization" || Key(name) == "packed_public_key") {
         const auto parsed = ParseUnsigned(value);
-        if (parsed > 1) throw std::invalid_argument("compact must be 0 or 1");
-        options.compact = parsed != 0;
+        if (parsed > 1) throw std::invalid_argument(name + " must be 0 or 1");
+        if (Key(name) == "compact") options.compact = parsed != 0;
+        else if(Key(name)=="packed_public_key")options.packed_public_key=parsed!=0;
+        else options.symmetric_relinearization = parsed != 0;
         return;
     }
-    if (Key(name) == "message_bound") {
+    if (Key(name) == "message_bound" || Key(name) == "scale_log2") {
         std::size_t consumed = 0;
-        options.message_bound = std::stod(value, &consumed);
-        if (consumed != value.size()) throw std::invalid_argument("message_bound must be a number");
+        const auto parsed=std::stod(value, &consumed);
+        if (consumed != value.size()) throw std::invalid_argument(name + " must be a number");
+        if(Key(name)=="message_bound")options.message_bound=parsed;
+        else options.scale_log2=parsed;
         return;
     }
     if (Key(name) == "rotation_steps") {
@@ -84,8 +88,16 @@ void ReadConfig(RunOptions& options, const std::string& path) {
 }  // namespace
 
 Profile RunOptions::MakeProfile() const {
-    if (compact) return CompactProfile(depth, slots, n, scale_bits, first_mod_bits, security_bits,
-                                      divisor_bits, gadget_bits, public_extra_bits, rotation_gadget_bits);
+    if (compact) {
+        auto p = CompactProfile(depth, slots, n, scale_bits, first_mod_bits, security_bits,
+                                divisor_bits, gadget_bits, public_extra_bits, rotation_gadget_bits, scale_log2, packed_public_key);
+        p.symmetric_relinearization = symmetric_relinearization;
+        return p;
+    }
+    if (symmetric_relinearization)
+        throw std::invalid_argument("Symmetric relinearization currently requires compact=1");
+    if (scale_log2)throw std::invalid_argument("scale_log2 currently requires compact=1");
+    if (packed_public_key)throw std::invalid_argument("packed_public_key currently requires compact=1");
     return OpenFheProfile(depth, slots, n, scale_bits, first_mod_bits, security_bits);
 }
 double RunOptions::EncodingScale() const {
@@ -140,6 +152,10 @@ RunOptions ParseOptions(int argc, char** argv, bool experiment) {
         throw std::invalid_argument("precision_bits must be 1..50; key_trials must be 1..100");
     if (!std::isfinite(options.message_bound) || options.message_bound <= 0 || options.message_bound > 1024)
         throw std::invalid_argument("message_bound must be finite and in (0,1024]");
+    if (!std::isfinite(options.scale_log2) || (options.scale_log2 &&
+        (!options.compact || options.scale_log2<20 || options.scale_log2>=59 ||
+         std::floor(options.scale_log2)!=options.scale_bits)))
+        throw std::invalid_argument("scale_log2 must be zero or compact target [20,59) with floor equal to scale_bits");
     if (options.smudge_bound > (1u << 30)) throw std::invalid_argument("smudge_bound must be 0..1073741824");
     if (options.initial_scale_bits && (options.initial_scale_bits < 40 || options.initial_scale_bits > 100))
         throw std::invalid_argument("initial_scale_bits must be 0 (automatic) or 40..100");
@@ -158,7 +174,10 @@ void WriteOptionsJson(std::ostream& out, const RunOptions& o) {
         << ",\"rotation_steps\":" << o.rotation_steps;
     if (o.compact) out << ",\"compact\":1,\"divisor_bits\":" << o.divisor_bits
         << ",\"gadget_bits\":" << o.gadget_bits << ",\"public_extra_bits\":" << o.public_extra_bits
-        << ",\"rotation_gadget_bits\":" << o.rotation_gadget_bits;
+        << ",\"rotation_gadget_bits\":" << o.rotation_gadget_bits
+        << ",\"symmetric_relinearization\":" << (o.symmetric_relinearization ? 1 : 0)
+        << ",\"packed_public_key\":" << (o.packed_public_key ? 1 : 0)
+        << ",\"scale_log2\":" << o.scale_log2;
     out << '}';
 }
 void PrintOptionsHelp(std::ostream& out, bool experiment) {
@@ -182,6 +201,9 @@ void PrintOptionsHelp(std::ostream& out, bool experiment) {
         << "  --initial-scale-bits INT  Initial Delta=2^bits; 0 auto or 40..100 (default 0)\n"
         << "  --print-parameters      Print resolved settings and actual profile, without key generation\n"
         << "  --compact               Paper-inspired pair multiplication with BV decomposition\n"
+        << "  --symmetric-relinearization 0|1  Combine symmetric secret products (compact only)\n"
+        << "  --scale-log2 NUMBER     Compact fractional prime target; floor must equal scale-bits; 0 uses original chain\n"
+        << "  --packed-public-key 0|1 Pack independent T into fewer <=60-bit primes (compact only)\n"
         << "  --divisor-bits INT       Compact DCP divisor prime bits, 16..40 (default 20)\n"
         << "  --gadget-bits INT        Compact BV base bits, 4..30 (default 20)\n"
         << "  --public-extra-bits INT  Compact public-basis extra prime bits, 16..40 (default 20)\n"
