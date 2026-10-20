@@ -6,11 +6,13 @@
 // key distribution and security checks. It does not implement LCR or OverModRaise.
 
 namespace {
-thread_local const CryptoContextImpl<DCRTPoly>* mlwrP03Context = nullptr;
+// Retain the configured context so an allocator cannot recycle a raw pointer
+// while its cached plaintext masks still belong to the previous context.
+thread_local CryptoContext<DCRTPoly> mlwrP03Context;
 thread_local std::map<std::tuple<uint32_t, uint32_t, bool, double>, Plaintext> mlwrP03Masks;
 
 bool MLWRP03Active(const CryptoContext<DCRTPoly>& cc) {
-    return mlwrP03Context == cc.get();
+    return mlwrP03Context == cc;
 }
 
 void MLWRP03Check(uint32_t N, uint32_t slots) {
@@ -78,7 +80,7 @@ Ciphertext<DCRTPoly> MLWRP03StC(ConstCiphertext<DCRTPoly> input,uint32_t slots,d
 } // namespace
 
 void MLWRConfigureP03Small(const CryptoContext<DCRTPoly>& cc,bool enabled) {
-    const auto next=enabled?cc.get():nullptr;
+    const auto next=enabled?cc:CryptoContext<DCRTPoly>{};
     if(mlwrP03Context!=next)mlwrP03Masks.clear();
     mlwrP03Context=next;
 }

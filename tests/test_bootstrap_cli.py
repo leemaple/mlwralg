@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory() as directory:
     p=Path(directory)/'参数.conf';p.write_text('N=65536\nslots=8\nscale_bits=55\nfirst_mod_bits=56\n')
     r=json.loads(run('--config',p,'--slots','16','--print-parameters').stdout)
     assert r['slots']==16 and r['security_bits']==128
-    assert len(r['Q_primes'])==21 and r['checked_public_bits']<=1761
+    assert len(r['Q_primes'])==21 and r['checked_public_bits']<=1747
     p.write_text('N=65536\nN=65536\n')
     run('--config',p,'--print-parameters',fail=True)
 print(json.dumps({'checks':checks,'passed':True}))

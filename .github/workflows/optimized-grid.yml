@@ -1,0 +1,55 @@
+name: Optimized compact full 60 combinations
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/bootstrap-four-papers]
+    paths: ['src/**','include/**','apps/**','configs/compact/**','scripts/run_parameter_grid.py','scripts/verify_parameter_grid.py','CMakeLists.txt','.github/workflows/optimized-grid.yml']
+permissions:
+  contents: read
+jobs:
+  grid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        k: [2, 3]
+        n: [4096, 8192, 16384]
+        depth: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: .deps/openfhe-install
+          key: openfhe-b59e1f2-ubuntu24-gcc13-native64-static-noomp-v1
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build_openfhe.sh
+      - run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOpenFHE_DIR="$PWD/.deps/openfhe-install/lib/OpenFHE"
+          cmake --build build --target mlwr_experiment --parallel 3
+          python3 scripts/run_parameter_grid.py build/grid build/mlwr_experiment --compact --optimized --samples 5 --warmups 1 --key-trials 3 --only-k ${{ matrix.k }} --only-n ${{ matrix.n }} --only-depth ${{ matrix.depth }}
+          python3 scripts/verify_parameter_grid.py build/grid --allow-subset
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimized-part-k${{ matrix.k }}-N${{ matrix.n }}-d${{ matrix.depth }}
+          path: build/grid/
+  aggregate:
+    if: ${{ always() }}
+    needs: grid
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: optimized-part-*
+          path: partials
+      - run: python3 scripts/merge_parameter_grid.py optimized-grid partials/optimized-part-*
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimized-grid-complete
+          path: optimized-grid/

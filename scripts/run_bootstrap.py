@@ -20,15 +20,30 @@ def main():
     parser.add_argument('--experiment-class',choices=['diagnostic','qualification'],default='diagnostic')
     args,extra=parser.parse_known_args()
     if not 1<=args.key_trials<=10 or args.timeout<1:parser.error('Invalid repetitions/timeout')
+    if args.experiment_class=='qualification':
+        if args.key_trials<3:parser.error('Qualification requires at least three fresh keys per family')
+        if '--refresh-probe' in extra or re.search(r'^\s*refresh[_-]probe\s*=\s*1',args.config.read_text(),re.M):
+            parser.error('Refresh-only probes cannot qualify a continued circuit')
     if args.output.exists() and any(args.output.iterdir()):parser.error('Use a new evidence directory')
     args.output.mkdir(parents=True,exist_ok=True)
     root=Path(__file__).resolve().parents[1];binary=args.executable.resolve(strict=True)
     identity=source_identity(root);binary_hash=digest(binary)
+    manifest=None;manifest_path=None
+    cache=binary.parent/'CMakeCache.txt'
+    if cache.exists():
+        entries=dict(line.split('=',1) for line in cache.read_text().splitlines()
+                     if '=' in line and not line.startswith(('#','//')))
+        location=next((v for k,v in entries.items() if k.startswith('OpenFHE_DIR:')),None)
+        if location:
+            manifest_path=Path(location).resolve().parents[1]/'mlwr-port-manifest.json'
+            if manifest_path.exists():manifest=json.loads(manifest_path.read_text())
     config=args.output/'requested.conf';config.write_bytes(args.config.read_bytes())
     metadata={'source_commit':command('git','-C',str(root),'rev-parse','HEAD'),
         'source_identity':identity,'environment':environment(binary),
         'experiment_class':args.experiment_class,'started_utc':datetime.now(timezone.utc).isoformat(),
         'key_trials_per_family':args.key_trials,'expected_runs':3*args.key_trials,
+        'openfhe_port_manifest':manifest,
+        'openfhe_port_manifest_sha256':digest(manifest_path) if manifest else None,
         'runner_sha256':{f:digest(root/'scripts'/f) for f in ['run_bootstrap.py','verify_bootstrap.py']},'results':[]}
     for trial in range(args.key_trials):
         for family in range(3):
@@ -45,6 +60,15 @@ def main():
                 try:
                     oracle=verify(folder/'output.json')
                     report=json.loads((folder/'output.json').read_text())
+                    if 'port_helper_sha256' in report['profile']:
+                        assert manifest
+                        assert report['profile']['port_helper_sha256']==manifest['helper_sha256']==digest(root/'patches/openfhe-p03-small.inc')
+                        assert report['profile']['patched_fhe_sha256']==manifest['patched_fhe_sha256']
+                        assert manifest['patcher_sha256']==digest(root/'scripts/patch_openfhe_sparse.py')
+                    if args.experiment_class=='qualification':
+                        assert report['validation_scope']=='two_refresh_continuation'
+                        assert report['circuit_depth']>0 and oracle['depth']==report['circuit_depth']
+                        assert oracle['refreshes']>=2
                     assert (code==0)==oracle['accepted']
                     row.update(status='passed' if oracle['accepted'] else 'precision_failed',oracle=oracle,
                                timings_ms=report['timings_ms'],profile=report['profile'])

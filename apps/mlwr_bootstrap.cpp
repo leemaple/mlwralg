@@ -55,6 +55,7 @@ std::map<std::string,std::string> Arguments(int argc,char** argv) {
         std::ifstream input(config);if(!input)throw std::invalid_argument("Cannot open config: "+config);
         std::string line;
         while(std::getline(input,line)) {
+            if(line.compare(0,3,"\xef\xbb\xbf")==0)line.erase(0,3);
             line=trim(line.substr(0,line.find('#')));if(line.empty())continue;
             const auto equal=line.find('=');
             if(equal==std::string::npos)throw std::invalid_argument("Config lines must be key=value");
@@ -126,14 +127,17 @@ int main(int argc,char** argv) {
         std::cerr<<"Key generation N="<<o.n<<", total depth="<<p.module.depth<<"\n";
         auto start=Clock::now();auto keys=scheme.KeyGen();timing["module_keygen_ms"]=Milliseconds(start);
         std::cerr<<"Bootstrap and folding key generation\n";
-        start=Clock::now();auto boot_key=bridge.KeyGen(keys.secret_key);timing["bootstrap_keygen_ms"]=Milliseconds(start);
+        start=Clock::now();auto boot_key=bridge.KeyGen(keys.secret_key,&timing);timing["bootstrap_keygen_ms"]=Milliseconds(start);
         mlwr::RelinearizationKey relin;
         if(!probe && !hybrid) {
             std::cerr<<"Module relinearization key generation\n";
             start=Clock::now();relin=scheme.RelinGen(keys.secret_key);timing["module_relin_keygen_ms"]=Milliseconds(start);
         }
         const auto decode_all=[&](const mlwr::Ciphertext& c) {
-            return scheme.DecodeAll({scheme.Phase(keys.secret_key,c),c.scale,c.bound,c.level,c.context});
+            const auto client_start=Clock::now();
+            auto decoded=scheme.DecodeAll({scheme.Phase(keys.secret_key,c),c.scale,c.bound,c.level,c.context});
+            timing["client_decrypt_decode_ms"]+=Milliseconds(client_start);
+            return decoded;
         };
         mlwr::Slots input;
         for(uint32_t j=0;j<o.slots;++j) {
@@ -250,7 +254,11 @@ int main(int argc,char** argv) {
             std::cout<<"{\"operation\":\""<<r.operation<<"\",\"depth\":"<<r.depth
                 <<",\"level_before\":"<<r.before<<",\"level_after\":"<<r.after<<",\"ms\":"<<r.ms
                 <<",\"max_error\":"<<r.error<<",\"scale\":"<<r.scale<<",\"decoded\":";
-            SlotsJson(r.decoded);std::cout<<",\"phases_ms\":{";
+            SlotsJson(r.decoded);
+            std::cout<<",\"inverse_scale\":"<<1/r.scale<<",\"error_times_scale\":"<<r.error*r.scale
+                <<",\"passes_inverse_scale\":"<<(r.error<=1/r.scale?"true":"false")
+                <<",\"measured_precision_bits\":"<<-std::log2(std::max(r.error,0x1p-1022))
+                <<",\"phases_ms\":{";
             bool phase_first=true;for(const auto& [name,ms]:r.phases) {
                 if(!phase_first)std::cout<<',';phase_first=false;std::cout<<'"'<<name<<"\":"<<ms;
             }

@@ -33,6 +33,16 @@ int main() {
         reject([&]{bridge.Fold(bad,badkey);});
         badkey=bk;badkey.folding.front()=nullptr;reject([&]{bridge.Fold(c,badkey);});
         badkey=bk;badkey.source_tags.front()="wrong";reject([&]{bridge.Fold(c,badkey);});
+        badkey=bk;badkey.k=0;reject([&]{bridge.Import(native,badkey,1);});
+        badkey=bk;std::swap(badkey.folding[0],badkey.folding[1]);reject([&]{bridge.Fold(c,badkey);});
+        // A foreign target in the same native context is still a wrong key.
+        const auto original_tag=bk.folding.front()->GetKeyTag();
+        bk.folding.front()->SetKeyTag("foreign-target-in-same-context");
+        reject([&]{bridge.Fold(c,bk);});
+        bk.folding.front()->SetKeyTag(original_tag);
+        auto malformed=std::make_shared<lbcrypto::EvalKeyRelinImpl<mlwr::RingPoly>>(profile.module.encoder);
+        malformed->SetKeyTag(bk.native_tag);
+        badkey=bk;badkey.folding.front()=malformed;reject([&]{bridge.Fold(c,badkey);});
         auto badnative=native->Clone();badnative->SetKeyTag("wrong");reject([&]{bridge.Import(badnative,bk,1);});
         badnative=native->Clone();badnative->SetNoiseScaleDeg(2);reject([&]{bridge.Import(badnative,bk,1);});
         badnative=native->Clone();badnative->SetSlots(4);reject([&]{bridge.Import(badnative,bk,1);});

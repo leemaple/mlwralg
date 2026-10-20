@@ -17,6 +17,16 @@ def verify(path):
         p = r['profile']
         n, slots = p['N'], p['slots']
         assert p['security_bits'] in (128, 192, 256)
+        # Pinned OpenFHE b59e1f2, HEStd_ternary classic table. In particular the
+        # N65536 / 128 entry is 1747, not a bound from another distribution.
+        dimensions=[1024,2048,4096,8192,16384,32768,65536,131072]
+        limits={128:[27,54,109,218,438,881,1747,3523],
+                192:[19,37,75,152,305,611,1199,2411],
+                256:[14,29,58,118,237,476,929,1866]}
+        assert p['secret_distribution']=='UNIFORM_TERNARY' and n in dimensions
+        assert p['checked_public_bits']<=limits[p['security_bits']][dimensions.index(n)]
+        required=next(d for d,b in zip(dimensions,limits[p['security_bits']]) if b>=p['checked_public_bits'])
+        assert p['required_N']==required
         assert p['required_N'] <= n
         def product(name):
             value = 1
@@ -33,6 +43,7 @@ def verify(path):
                                ('module_P_primes', 'native_P_primes', 'public_T_primes')]
         assert max(q*module_p, q*native_p, t).bit_length() == p['checked_public_bits']
         assert len(r['input']) == slots and r['decoded_layout'] == 'all_N_over_2_slots_repeating_input'
+        assert 0<slots<=n//2 and not (slots&(slots-1))
         expected = [(D(x), D(y)) for x, y in r['input']]
         factor = tuple(map(D, r['factor']))
         target = D(2) ** -r['precision_bits']
@@ -57,6 +68,9 @@ def verify(path):
         for record in r['records']:
             assert record['level_before'] == last_level
             assert D(record['scale']).is_finite() and D(record['scale']) > 0
+            if 'passes_inverse_scale' in record:
+                assert record['passes_inverse_scale']==(D(record['max_error'])<=1/D(record['scale']))
+                assert abs(D(record['inverse_scale'])*D(record['scale'])-1)<D('1e-14')
             assert D(record['ms']) > 0
             total += D(record['ms'])
             if record['operation'] == 'bootstrap':

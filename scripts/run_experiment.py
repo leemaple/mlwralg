@@ -24,6 +24,9 @@ def source_identity(root):
     paths = [root / "CMakeLists.txt"]
     for directory in ("include", "src", "apps"):
         paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
+    paths.extend(p for p in (root / "patches").rglob("*") if p.is_file())
+    for name in ('patch_openfhe_sparse.py','build_openfhe_p03.sh'):
+        if (root/'scripts'/name).exists():paths.append(root/'scripts'/name)
     files = {str(p.relative_to(root)): digest(p) for p in sorted(paths)}
     canonical = json.dumps(files, sort_keys=True, separators=(",", ":")).encode()
     return {"sha256": hashlib.sha256(canonical).hexdigest(), "files": files}

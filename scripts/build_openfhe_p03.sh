@@ -46,7 +46,11 @@ files={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in [
  root/'scripts/patch_openfhe_sparse.py',root/'patches/openfhe-p03-small.inc',
  src/'src/pke/lib/scheme/ckksrns/ckksrns-fhe.cpp']}
 (install/'mlwr-port-manifest.json').write_text(json.dumps({'upstream_commit':sys.argv[4],
- 'files':files,'native_bits':64,'openmp':False,'bootstrap_timing':True},indent=2))
+ 'files':files,'native_bits':64,'openmp':False,'bootstrap_timing':True,
+ 'helper_sha256':hashlib.sha256((root/'patches/openfhe-p03-small.inc').read_bytes()).hexdigest(),
+ 'patcher_sha256':hashlib.sha256((root/'scripts/patch_openfhe_sparse.py').read_bytes()).hexdigest(),
+ 'patched_fhe_sha256':hashlib.sha256((src/'src/pke/lib/scheme/ckksrns/ckksrns-fhe.cpp').read_bytes()).hexdigest(),
+ 'pke_library_sha256':hashlib.sha256((install/'lib/libOPENFHEpke_static.a').read_bytes()).hexdigest()},indent=2))
 PY
 printf '%s\n' "$port_install/lib/OpenFHE" > "$dependency_dir/p03-openfhe-dir.txt"
 printf 'OpenFHE_DIR=%s\n' "$port_install/lib/OpenFHE"

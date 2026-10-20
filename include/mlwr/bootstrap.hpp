@@ -33,12 +33,17 @@ struct BootstrapKey {
     std::string native_tag;
     uint64_t context = 0, key_tag = 0;
     uint32_t k = 0;
+  private:
+    // Public evaluation keys only. Preserve which switching key was generated
+    // for each source component, even if the exposed vector is reordered.
+    std::vector<lbcrypto::EvalKey<RingPoly>> bound_folding_;
+    friend class BootstrapBridge;
 };
 
 class BootstrapBridge {
   public:
     BootstrapBridge(const ResearchScheme&, const BootstrapProfile&);
-    BootstrapKey KeyGen(const SecretKey&) const;
+    BootstrapKey KeyGen(const SecretKey&, std::map<std::string,double>* timings = nullptr) const;
     lbcrypto::Ciphertext<RingPoly> Fold(const Ciphertext&, const BootstrapKey&) const;
     Ciphertext Import(const lbcrypto::Ciphertext<RingPoly>&, const BootstrapKey&,
                       double public_bound) const;
@@ -54,6 +59,7 @@ class BootstrapBridge {
   private:
     const ResearchScheme& scheme_;
     BootstrapProfile profile_;
+    void ValidateKey(const BootstrapKey&) const;
     void Validate(const Ciphertext&, const BootstrapKey&) const;
 };
 }  // namespace mlwr

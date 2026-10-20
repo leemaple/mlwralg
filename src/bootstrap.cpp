@@ -130,7 +130,12 @@ void WriteBootstrapProfile(std::ostream& out, const BootstrapProfile& p) {
     write_basis("native_P_primes",crypto->GetParamsP());
     write_basis("public_T_primes",IndependentLargerBasis(p.module.ciphertext,p.module.auxiliary));
     out << ",\"correction_factor_requested\":" << p.requested.correction_factor
-        << ",\"openfhe_commit\":\"b59e1f291965f14fbee5172cd83a20f5b856204f\"}";
+        << ",\"openfhe_commit\":\"b59e1f291965f14fbee5172cd83a20f5b856204f\"";
+#ifdef MLWR_P03_PATCH
+    out << ",\"port_helper_sha256\":\"" << MLWR_PORT_HELPER_SHA
+        << "\",\"patched_fhe_sha256\":\"" << MLWR_PORT_FHE_SHA << '"';
+#endif
+    out << '}';
 }
 
 BootstrapBridge::BootstrapBridge(const ResearchScheme& scheme, const BootstrapProfile& profile)
@@ -141,7 +146,7 @@ BootstrapBridge::BootstrapBridge(const ResearchScheme& scheme, const BootstrapPr
         throw std::invalid_argument("Bootstrap scheme/profile mismatch");
 }
 
-BootstrapKey BootstrapBridge::KeyGen(const SecretKey& secret) const {
+BootstrapKey BootstrapBridge::KeyGen(const SecretKey& secret,std::map<std::string,double>* timings) const {
     ConfigureSparse(profile_);
     if (!secret.context || !secret.tag || secret.s.size() != scheme_.k())
         throw std::invalid_argument("Bootstrap module key shape mismatch");
@@ -160,29 +165,54 @@ BootstrapKey BootstrapBridge::KeyGen(const SecretKey& secret) const {
     result.context = secret.context; result.key_tag = secret.tag; result.k = scheme_.k();
     result.native_tag = private_parts.front()->GetKeyTag();
     for (const auto& s : private_parts) result.source_tags.push_back(s->GetKeyTag());
+    auto start=Clock::now();
     for (uint32_t j=1; j<scheme_.k(); ++j)
         result.folding.push_back(cc->KeySwitchGen(private_parts[j], private_parts.front()));
+    result.bound_folding_=result.folding;
+    if(timings)(*timings)["fold_keygen_ms"]=Elapsed(start);
+    start=Clock::now();
     cc->EvalBootstrapSetup({profile_.requested.cts_levels, profile_.requested.stc_levels},
                           {0,0}, profile_.requested.slots, profile_.requested.correction_factor);
+    if(timings)(*timings)["bootstrap_setup_ms"]=Elapsed(start);
+    start=Clock::now();
     cc->EvalMultKeyGen(private_parts.front());
+    if(timings)(*timings)["native_mult_keygen_ms"]=Elapsed(start);
+    start=Clock::now();
     cc->EvalBootstrapKeyGen(private_parts.front(), profile_.requested.slots);
+    if(timings)(*timings)["native_bootstrap_keygen_ms"]=Elapsed(start);
     return result;
 }
 
-void BootstrapBridge::Validate(const Ciphertext& x, const BootstrapKey& key) const {
+void BootstrapBridge::ValidateKey(const BootstrapKey& key) const {
     if (!key.context || key.context != scheme_.context_id() || !key.key_tag ||
-        x.context != key.context || x.key_tag != key.key_tag || key.k != scheme_.k() ||
-        x.c.size() != key.k+1 || key.folding.size() != key.k-1 || key.source_tags.size() != key.k ||
-        key.native_tag.empty() || !std::isfinite(x.scale) || x.scale < 0x1p40 ||
-        !std::isfinite(x.bound) || x.bound <= 0)
-        throw std::invalid_argument("Bootstrap bridge context/key/shape/scale mismatch");
+        key.k != scheme_.k() || key.folding.size() != key.k-1 ||
+        key.folding != key.bound_folding_ ||
+        key.source_tags.size() != key.k || key.native_tag.empty())
+        throw std::invalid_argument("Bootstrap evaluation key context/shape mismatch");
     if(key.source_tags.front()!=key.native_tag)
         throw std::invalid_argument("Bootstrap native/source tag mismatch");
     for(const auto& tag:key.source_tags)
         if(tag.empty())throw std::invalid_argument("Empty bootstrap source tag");
-    for(const auto& folding:key.folding)
-        if(!folding || folding->GetCryptoContext()!=profile_.module.encoder)
+    auto crypto=std::dynamic_pointer_cast<lbcrypto::CryptoParametersCKKSRNS>(profile_.module.encoder->GetCryptoParameters());
+    for(const auto& folding:key.folding) {
+        if(!folding || folding->GetCryptoContext()!=profile_.module.encoder ||
+            folding->GetKeyTag()!=key.native_tag)
             throw std::invalid_argument("Invalid bootstrap folding key");
+        if(folding->GetAVector().size()!=crypto->GetNumPartQ() ||
+           folding->GetBVector().size()!=crypto->GetNumPartQ())
+            throw std::invalid_argument("Bootstrap folding key digit shape mismatch");
+        for(const auto* rows:{&folding->GetAVector(),&folding->GetBVector()})
+            for(const auto& part:*rows)
+                if(part.GetFormat()!=EVALUATION || !SameBasis(part.GetParams(),crypto->GetParamsQP()))
+                    throw std::invalid_argument("Bootstrap folding key exact basis mismatch");
+    }
+}
+
+void BootstrapBridge::Validate(const Ciphertext& x, const BootstrapKey& key) const {
+    ValidateKey(key);
+    if (x.context != key.context || x.key_tag != key.key_tag || x.c.size() != key.k+1 ||
+        !std::isfinite(x.scale) || x.scale < 0x1p40 || !std::isfinite(x.bound) || x.bound <= 0)
+        throw std::invalid_argument("Bootstrap bridge ciphertext context/key/shape/scale mismatch");
     const auto basis = scheme_.basis(x.level);
     for (const auto& c : x.c)
         if (c.GetFormat()!=EVALUATION || !SameBasis(c.GetParams(), basis))
@@ -215,9 +245,11 @@ lbcrypto::Ciphertext<RingPoly> BootstrapBridge::Fold(const Ciphertext& x, const 
 
 Ciphertext BootstrapBridge::Import(const lbcrypto::Ciphertext<RingPoly>& input,
                                    const BootstrapKey& key, double public_bound) const {
+    ValidateKey(key);
     if (!input || input->GetCryptoContext()!=profile_.module.encoder ||
         input->GetKeyTag()!=key.native_tag || input->GetElements().size()!=2 ||
-        input->GetSlots()!=profile_.requested.slots || input->GetNoiseScaleDeg()!=1)
+        input->GetSlots()!=profile_.requested.slots || input->GetNoiseScaleDeg()!=1 ||
+        input->GetLevel()>profile_.module.depth)
         throw std::invalid_argument("Bootstrap native output context/key/metadata mismatch");
     const auto level = static_cast<uint32_t>(input->GetLevel());
     Row row(key.k+1,Zero(scheme_.basis(level)));
@@ -293,6 +325,11 @@ lbcrypto::Ciphertext<RingPoly> BootstrapBridge::ProjectRepeated(const lbcrypto::
        input->GetElements().size()!=2 || input->GetSlots()!=profile_.requested.slots || input->GetNoiseScaleDeg()!=1 ||
        !std::isfinite(input->GetScalingFactor()) || input->GetScalingFactor()<=0)
         throw std::invalid_argument("Repeated-slot projection context/metadata mismatch");
+    if(input->GetLevel()>profile_.module.depth)
+        throw std::invalid_argument("Repeated-slot projection level out of range");
+    for(const auto& part:input->GetElements())
+        if(part.GetFormat()!=EVALUATION || !SameBasis(part.GetParams(),scheme_.basis(input->GetLevel())))
+            throw std::invalid_argument("Repeated-slot projection exact basis mismatch");
     auto output=input->Clone();
     const auto copies=profile_.requested.n/(2*profile_.requested.slots);
     if(copies>1) {
