@@ -115,7 +115,28 @@ bootstrap：`summary.csv` 先看每把新密钥/消息类的状态；各目录 `
 
 ## 6. 不在本机运行：GitHub入口
 
-在 [项目 Actions](https://github.com/leemaple/mlwralg/actions) 选择分支 `codex/bootstrap-four-papers`：
+**只用浏览器改小参数实验：**打开 [已有的 correctness 工作流](https://github.com/leemaple/mlwralg/actions/workflows/ci.yml)，点击 `Run workflow`，在分支下拉中选择 `codex/bootstrap-four-papers`。将下面一行粘到 `parameters`，修改其中的 `l`、`k`、`N`、`depth` 等数值后运行。等待完成，在该次运行底部下载 `correctness-evidence-linux`，查看 `experiment-custom/experiment.json`。必须选择新分支；默认 `main` 仍是上一版。
+
+```text
+compact=1;l=2;k=2;N=8192;depth=5;slots=8;scale_bits=27;scale_log2=27.83;first_mod_bits=46;divisor_bits=16;public_extra_bits=17;gadget_bits=20;rotation_gadget_bits=14;symmetric_relinearization=1;packed_public_key=1;security_bits=128;precision_bits=20;key_trials=3;samples=15;warmups=2;message_seed=20261013;message_bound=2;smudge_bound=0;rotation_steps=1;initial_scale_bits=0
+```
+
+新增自举工作流尚未合入默认分支，网页可能没有 `Run workflow` 按钮；不能把“能看到历史运行”当作“网页已提供手动入口”。[GitHub 官方触发说明](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)区分了默认分支上的网页按钮和已运行工作流的 CLI/API 派发。当前分片工作流已注册为活动状态；无需本机编译，可用以下命令提交到 GitHub 运行：
+
+```sh
+gh workflow run bootstrap-sharded.yml --repo leemaple/mlwralg --ref codex/bootstrap-four-papers
+```
+
+若只想按原参数重做已完成的批次，可在 [本轮分片运行](https://github.com/leemaple/mlwralg/actions/runs/39367123814) 的网页使用 `Re-run all jobs`；这会重跑该次运行的原提交，不采用随后新改的配置。分片工作流固定40次，其他深度的单任务对照用：
+
+```sh
+gh workflow run bootstrap-qualification.yml --repo leemaple/mlwralg \
+  --ref codex/bootstrap-four-papers -f suite=bootstrap -f circuit_depth=60
+```
+
+60是待测请求示例，不是本轮已通过的结论。更细的自举参数写在配置文件中；在新分支修改后再提交运行，保留原结果目录。
+
+在 [项目 Actions](https://github.com/leemaple/mlwralg/actions) 可找到以下工作流；运行新版本时使用分支 `codex/bootstrap-four-papers`：
 
 1. **MLWR and OpenFHE correctness**：编译和回归检查。
 2. **Optimized compact full 60 combinations**：固定 l=2、k=2/3、N4096/8192/16384、深度1..10；新版本全部组合，拒绝项也留档。
